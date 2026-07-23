@@ -1,0 +1,32 @@
+# Extra paths the CORS scanner probes in addition to the root URL httpx
+# already found live. CORS misconfigurations are frequently on an
+# authenticated/API endpoint rather than the homepage (e.g. an
+# "account details" API called via fetch() with credentials) - bbtracker
+# doesn't crawl pages or log in, so it can't discover these on its own, but
+# trying common naming conventions for this exact class of endpoint catches
+# a meaningful share of them for free. Not a substitute for a full wordlist
+# or an authenticated crawl - a small, curated starting point.
+accountDetails
+api/accountDetails
+account
+api/account
+profile
+api/profile
+me
+api/me
+user
+api/user
+userinfo
+api/userinfo
+session
+api/session
+settings
+api/settings
+config
+api/config
+token
+api/token
+api/v1/me
+api/v1/user
+api/v1/account
+graphql

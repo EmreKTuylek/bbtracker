@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rn \"type Proto\\\\|UNKNOWN\\\\s*Proto\\\\|Proto =\" \"/c/Users/EMRE/go/pkg/mod/github.com/projectdiscovery/httpx@v1.9.0/common/httpx/\" 2>/dev/null | head -20)",
+      "Read(//c/Users/EMRE/go/pkg/mod/github.com/projectdiscovery/httpx@v1.9.0/common/httpx//**)",
+      "Bash(go mod *)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(mkdir -p \"c:/Users/EMRE/Desktop/bbtrackerDesktop/cmd/storetest\")",
+      "Bash(cp /tmp/bbstoretest/main.go \"c:/Users/EMRE/Desktop/bbtrackerDesktop/cmd/storetest/main.go\")",
+      "Bash(sed -i 's#/tmp/bbstoretest/test.db#storetest.db#' cmd/storetest/main.go)",
+      "Bash(go run *)",
+      "Bash(xargs -n1 basename)",
+      "Bash(go test *)",
+      "Bash(gofmt -l internal/store internal/recon)",
+      "Bash(gofmt -w internal/store/schedule_test.go internal/store/triage_test.go internal/recon/recon_test.go internal/recon/cors_test.go)"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+*.db
+*.db-journal
+.env
+.env.local
+bbtracker.exe
+*.log

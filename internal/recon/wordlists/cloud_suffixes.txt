@@ -1,0 +1,54 @@
+# Curated suffix/prefix terms combined with a base keyword (derived from
+# in-scope domains) to generate candidate cloud storage bucket/container
+# names - the same idea as cloud_enum's permutation wordlist, kept small to
+# bound request volume (see cloudEnumWorkers/cloudEnumPerKeywordBudget).
+backup
+backups
+dev
+prod
+production
+staging
+stage
+test
+testing
+assets
+static
+media
+files
+file
+data
+public
+private
+uploads
+upload
+images
+img
+www
+api
+app
+web
+cdn
+logs
+log
+config
+configs
+db
+database
+secure
+internal
+admin
+portal
+docs
+documents
+downloads
+download
+archive
+storage
+bucket
+content
+resources
+shared
+temp
+tmp
+old
+new

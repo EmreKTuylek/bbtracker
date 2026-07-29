@@ -96,6 +96,28 @@ binary.
   per finding (title, affected asset, per-type description, Steps to
   Reproduce/Impact placeholders), copy-pasteable into a platform's
   submission form.
+- Optional DNS/infrastructure analysis (DNS record enumeration, an AXFR
+  zone-transfer probe, and WAF/CDN/cloud-provider + ASN attribution derived
+  from each host's resolved IP) against known hosts, opt-in per scan and per
+  recurring schedule.
+- Optional passive host discovery via internet-wide search engines (Shodan,
+  Censys, FOFA, and others), finding assets subfinder's own passive-source
+  enumeration misses entirely — opt-in per scan and per recurring schedule,
+  requires at least one search-engine API key (app-wide setting); running
+  with none configured is a normal, expected no-op, not an error.
+- Optional web crawling (linked pages, forms, JS-referenced endpoints) over
+  live probed URLs, widening the URL set that nuclei/CORS/hidden-parameter
+  discovery scan over — opt-in per scan and per recurring schedule, requires
+  the HTTP probe tool.
+- Single-asset rescan: a "Rescan" action on any known asset re-runs the
+  selected host-oriented tools (HTTP probe, nuclei, fuzz, CORS, hidden
+  params, JS analysis, crawl, takeover, TLS, DNS/infra) against just that
+  asset, without re-running domain-wide discovery.
+- Screenshot gallery: a grid view of every asset with a captured screenshot,
+  for quickly scanning a program's visual footprint.
+- Print/PDF export: a print-optimized view of any findings table or the
+  unified findings panel, for offline reporting via the browser's own
+  print-to-PDF.
 
 ## Non-goals (v1)
 
@@ -103,7 +125,11 @@ binary.
 - No cloud sync/backup.
 - No currency conversion — earnings are summed per-currency, never combined.
 - No port scanning.
-- No WAF fingerprinting (wafw00f-equivalent) — explicitly deferred.
+- ~~No WAF fingerprinting~~ — reversed: DNS/infrastructure analysis now
+  includes WAF attribution via `cdncheck`, which turned out to already be a
+  zero-cost transitive dependency (see CLAUDE.md's DNS/infrastructure
+  analysis section). The original deferral assumed a new dependency would be
+  needed; it wasn't.
 - No HTTP request smuggling detection (smuggler-equivalent) — explicitly
   deferred, too intrusive (requires deliberately malformed/ambiguous
   requests) for an opt-in recon tool that may run unattended; see CLAUDE.md.
@@ -117,7 +143,8 @@ binary.
 - `programs` — id, name, platform, url, notes, created_at.
 - `scopes` — program_id, domain, type (`in`/`out`).
 - `scans` — program_id, status (`running`/`done`/`error`), timestamps,
-  new_assets_count, error.
+  new_assets_count, error, asset_id (0 = whole-program scan; nonzero scopes
+  the scan to a single asset, see "Single-asset rescan").
 - `assets` — program_id, subdomain (unique per program), source, notes,
   first/last seen.
 - `probes` — one-per-asset latest httpx result (url, status_code, title, tech,
@@ -154,13 +181,22 @@ binary.
 - `tls_findings` — asset_id, scan_id, host, issue (`expired`/`expiring_soon`/
   `self_signed`/`hostname_mismatch`/`weak_protocol`/`new_san_subdomain`),
   detail, found_at; one current row per (asset_id, issue, detail).
-- Every findings table above (except `archived_urls`) also has `status`
-  (`open`/`accepted_risk`/`false_positive`/`fixed`, default `open`) and
-  `triage_notes`, settable via one generic endpoint (see API surface).
+- `dns_findings` — asset_id, scan_id, host, kind (`record`/`zone_transfer`/
+  `waf`/`cdn`/`cloud`/`asn`), detail, value, found_at; one current row per
+  (asset_id, kind, detail, value).
+- `crawled_urls` — asset_id, scan_id, url, found_at; one row per (asset_id,
+  url) katana has ever discovered while crawling that asset. No status/
+  triage_notes (same as `archived_urls`) — a wider URL surface for other
+  tools, not a finding of its own.
+- Every findings table above (except `archived_urls`/`crawled_urls`) also
+  has `status` (`open`/`accepted_risk`/`false_positive`/`fixed`, default
+  `open`) and `triage_notes`, settable via one generic endpoint (see API
+  surface).
 - `app_settings` — single row: Telegram bot token/chat id/enabled + per-category
   notify flags (new assets, changed assets, vulnerabilities), GitHub token,
   scan retention count (0 = unlimited), HackerOne username/API token (scope
-  import).
+  import), Uncover API keys (one `agent:value` pair per line, for the
+  passive-discovery search engines).
 
 ## API surface
 
@@ -181,6 +217,7 @@ binary.
 | GET | `/api/assets/{id}/screenshot` | Get an asset's latest probe screenshot (PNG) |
 | PATCH | `/api/assets/{id}/notes` | Set an asset's free-text notes |
 | POST | `/api/programs/{id}/scans` | Start a scan (409 if one is already running) |
+| POST | `/api/assets/{id}/scan` | Start a scan scoped to a single known asset (same 409 semantics) |
 | GET | `/api/programs/{id}/scans` | List past scans for a program |
 | GET | `/api/scans/{id}` | Poll scan status |
 | POST | `/api/scans/{id}/stop` | Stop a running scan |
@@ -200,10 +237,12 @@ binary.
 | GET | `/api/programs/{id}/cloud-findings` | List cloud storage enumeration findings for a program |
 | GET | `/api/programs/{id}/takeover-findings` | List subdomain-takeover findings for a program |
 | GET | `/api/programs/{id}/tls-findings` | List TLS certificate findings for a program |
-| PATCH | `/api/findings/{kind}/{id}` | Set a finding's triage status/notes (kind: vulnerabilities, cors, fuzz, github, cloud, js, params, takeover, tls) |
+| GET | `/api/programs/{id}/dns-findings` | List DNS/infrastructure findings for a program |
+| GET | `/api/programs/{id}/crawled-urls` | List katana-crawled URLs for a program |
+| PATCH | `/api/findings/{kind}/{id}` | Set a finding's triage status/notes (kind: vulnerabilities, cors, fuzz, github, cloud, js, params, takeover, tls, dns) |
 | GET | `/api/programs/{id}/export?type=<t>` | Download a program's table as CSV (assets, bounties, or any findings type) |
-| GET | `/api/settings` | Get Telegram notification settings, GitHub token, scan retention count, HackerOne credentials |
-| PUT | `/api/settings` | Update Telegram notification settings, GitHub token, scan retention count, HackerOne credentials |
+| GET | `/api/settings` | Get Telegram notification settings, GitHub token, scan retention count, HackerOne credentials, Uncover API keys |
+| PUT | `/api/settings` | Update Telegram notification settings, GitHub token, scan retention count, HackerOne credentials, Uncover API keys |
 | POST | `/api/settings/test` | Send a one-off Telegram test message |
 
 Frontend polls `GET /api/scans/{id}` every 2s while `status == "running"`, then

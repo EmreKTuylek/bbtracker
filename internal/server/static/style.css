@@ -801,6 +801,14 @@ a.export-csv {
 }
 a.export-csv:hover { background: var(--bg-inset); color: var(--fg); }
 
+/* "Print / PDF" button, injected next to Export CSV (see setupExportLinks). */
+button.print-btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
 /* Table pagination controls (asset table). */
 .table-pagination {
   display: flex;
@@ -1261,4 +1269,67 @@ a.export-csv:hover { background: var(--bg-inset); color: var(--fg); }
 .sidebar::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 999px;
+}
+
+/* ---------- Screenshot gallery ---------- */
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.gallery-grid:empty::after {
+  content: attr(data-empty);
+  color: var(--muted);
+  font-size: 0.9rem;
+  grid-column: 1 / -1;
+  padding: 1.5rem 0;
+  text-align: center;
+}
+.gallery-tile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-inset);
+}
+.gallery-tile img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+  cursor: pointer;
+}
+.gallery-caption {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Print / PDF (window.print(), see the Print button in each
+   panel-header) ---------- */
+
+@media print {
+  .sidebar, #tab-bar, #dashboard-nav-btn, .scan-options, .action-buttons,
+  #scan-status, #scan-progress, .toolbar, .table-pagination, a.export-csv,
+  button.print-btn, #toast-container, #screenshot-modal, #scan-diff-modal,
+  #report-modal, .panel-form-title, #program-form, .quick-wins-hint,
+  .all-findings-wrap .chip, #dashboard-view .panel-header label {
+    display: none !important;
+  }
+  .app { display: block; }
+  .main { padding: 0; }
+  .table-wrap {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  table, tr, td, th { break-inside: avoid; }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }

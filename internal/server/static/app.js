@@ -19,6 +19,8 @@ const state = {
   cloudFindings: [],
   takeoverFindings: [],
   tlsFindings: [],
+  dnsFindings: [],
+  crawledURLs: [],
   assetPage: 0,
 };
 
@@ -168,7 +170,7 @@ async function selectProgram(id) {
   await Promise.all([
     loadScopes(id), loadAssets(id), loadScans(id), loadBounties(id), loadVulnerabilities(id), loadFuzzHits(id),
     loadArchivedURLs(id), loadParamHits(id), loadJSFindings(id), loadCORSFindings(id), loadGitHubFindings(id),
-    loadCloudFindings(id), loadTakeoverFindings(id), loadTLSFindings(id),
+    loadCloudFindings(id), loadTakeoverFindings(id), loadTLSFindings(id), loadDNSFindings(id), loadCrawledURLs(id),
   ]);
   renderOverview();
 }
@@ -258,6 +260,7 @@ const DASHBOARD_FINDING_MAP = {
   param: "param_hits",
   takeover: "takeover_findings",
   tls: "tls_findings",
+  dns: "dns_findings",
 };
 
 function renderDashboardFindings(data) {
@@ -359,6 +362,9 @@ function renderScheduleForm(program) {
   el("#sched-cloud").checked = !!program.schedule_run_cloud_enum;
   el("#sched-takeover").checked = !!program.schedule_run_takeover;
   el("#sched-tls").checked = !!program.schedule_run_tls;
+  el("#sched-dns").checked = !!program.schedule_run_dns;
+  el("#sched-uncover").checked = !!program.schedule_run_uncover;
+  el("#sched-crawl").checked = !!program.schedule_run_crawl;
 
   const parts = [];
   if (program.schedule_enabled) {
@@ -394,6 +400,9 @@ el("#schedule-form").addEventListener("submit", async (e) => {
     run_cloud_enum: el("#sched-cloud").checked,
     run_takeover: el("#sched-takeover").checked,
     run_tls: el("#sched-tls").checked,
+    run_dns: el("#sched-dns").checked,
+    run_uncover: el("#sched-uncover").checked,
+    run_crawl: el("#sched-crawl").checked,
   };
   try {
     const updated = await api(`/api/programs/${id}/schedule`, {
@@ -526,6 +535,7 @@ async function loadAssets(programId) {
   state.assets = await api(`/api/programs/${programId}/assets`);
   state.assetPage = 0;
   renderAssets();
+  renderGallery();
 }
 
 const NUMERIC_SORT_KEYS = new Set(["probe.status_code", "probe.content_length"]);
@@ -643,6 +653,16 @@ function renderAssets() {
 
     tr.appendChild(assetNotesCell(a));
 
+    const actionTd = document.createElement("td");
+    const rescanBtn = document.createElement("button");
+    rescanBtn.type = "button";
+    rescanBtn.className = "icon-btn";
+    rescanBtn.textContent = "Rescan";
+    rescanBtn.title = "Rescan just this asset with the checked tools above";
+    rescanBtn.addEventListener("click", () => rescanAsset(a.id));
+    actionTd.appendChild(rescanBtn);
+    tr.appendChild(actionTd);
+
     tbody.appendChild(tr);
   }
 }
@@ -709,6 +729,52 @@ el("#screenshot-modal").addEventListener("click", () => {
   el("#screenshot-modal").classList.add("hidden");
 });
 
+// ---------- Screenshot gallery ----------
+//
+// Pure frontend view over state.assets - no new endpoint. Every asset whose
+// probe.has_screenshot is true (see renderAssets' thumbnail column) gets a
+// grid tile; clicking one reuses the existing #screenshot-modal lightbox.
+
+function renderGallery() {
+  const grid = el("#gallery-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const query = el("#gallery-search")?.value.trim().toLowerCase() || "";
+  const shots = state.assets.filter((a) => {
+    if (!a.probe || !a.probe.has_screenshot) return false;
+    if (!query) return true;
+    const haystack = [a.subdomain, a.probe.title].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+
+  if (!shots.length) return; // CSS :empty::after shows the data-empty message
+
+  for (const a of shots) {
+    const tile = document.createElement("div");
+    tile.className = "gallery-tile";
+
+    const img = document.createElement("img");
+    img.src = `/api/assets/${a.id}/screenshot`;
+    img.alt = a.subdomain;
+    img.addEventListener("click", () => {
+      el("#screenshot-modal-img").src = img.src;
+      el("#screenshot-modal").classList.remove("hidden");
+    });
+    tile.appendChild(img);
+
+    const caption = document.createElement("p");
+    caption.className = "gallery-caption";
+    caption.title = a.probe.title || a.subdomain;
+    caption.textContent = a.probe.title ? `${a.subdomain} — ${a.probe.title}` : a.subdomain;
+    tile.appendChild(caption);
+
+    grid.appendChild(tile);
+  }
+}
+
+el("#gallery-search")?.addEventListener("input", debounce(renderGallery, 200));
+
 el("#opt-httpx").addEventListener("change", () => {
   const on = el("#opt-httpx").checked;
   el("#opt-screenshot").disabled = !on;
@@ -716,6 +782,7 @@ el("#opt-httpx").addEventListener("change", () => {
   el("#opt-fuzz").disabled = !on;
   el("#opt-params").disabled = !on;
   el("#opt-jsanalysis").disabled = !on;
+  el("#opt-crawl").disabled = !on;
   el("#opt-cors").disabled = !on;
   if (!on) {
     el("#opt-screenshot").checked = false;
@@ -725,6 +792,7 @@ el("#opt-httpx").addEventListener("change", () => {
     el("#opt-params").checked = false;
     el("#opt-params-wordlist").disabled = true;
     el("#opt-jsanalysis").checked = false;
+    el("#opt-crawl").checked = false;
     el("#opt-cors").checked = false;
     el("#opt-cors-wordlist").disabled = true;
   }
@@ -756,6 +824,30 @@ el("#sched-cors").addEventListener("change", () => {
 
 // ---------- Scans ----------
 
+// buildAssetScanBody reads the host-oriented subset of the scan-options
+// toolbar (httpx and everything that depends on it, plus takeover/TLS/DNS) -
+// shared by the whole-program "Scan" button and the Assets tab's per-row
+// "Rescan" button. Domain-scoped tools (subfinder/wayback/GitHub dork/cloud
+// enum/uncover) are read separately since they don't apply to a single asset.
+function buildAssetScanBody() {
+  return {
+    run_httpx: el("#opt-httpx").checked,
+    screenshot: el("#opt-screenshot").checked,
+    run_nuclei: el("#opt-nuclei").checked,
+    run_fuzz: el("#opt-fuzz").checked,
+    fuzz_wordlist_path: el("#opt-fuzz-wordlist").value.trim(),
+    run_params: el("#opt-params").checked,
+    params_wordlist_path: el("#opt-params-wordlist").value.trim(),
+    run_jsanalysis: el("#opt-jsanalysis").checked,
+    run_crawl: el("#opt-crawl").checked,
+    run_cors: el("#opt-cors").checked,
+    cors_wordlist_path: el("#opt-cors-wordlist").value.trim(),
+    run_takeover: el("#opt-takeover").checked,
+    run_tls: el("#opt-tls").checked,
+    run_dns: el("#opt-dns").checked,
+  };
+}
+
 el("#scan-btn").addEventListener("click", async () => {
   const id = state.currentProgramId;
   if (id == null) return;
@@ -764,22 +856,12 @@ el("#scan-btn").addEventListener("click", async () => {
   el("#scan-status").textContent = "Starting scan...";
   try {
     const body = {
+      ...buildAssetScanBody(),
       run_subfinder: el("#opt-subfinder").checked,
-      run_httpx: el("#opt-httpx").checked,
-      screenshot: el("#opt-screenshot").checked,
-      run_nuclei: el("#opt-nuclei").checked,
-      run_fuzz: el("#opt-fuzz").checked,
-      fuzz_wordlist_path: el("#opt-fuzz-wordlist").value.trim(),
       run_wayback: el("#opt-wayback").checked,
-      run_params: el("#opt-params").checked,
-      params_wordlist_path: el("#opt-params-wordlist").value.trim(),
-      run_jsanalysis: el("#opt-jsanalysis").checked,
-      run_cors: el("#opt-cors").checked,
-      cors_wordlist_path: el("#opt-cors-wordlist").value.trim(),
       run_github_dork: el("#opt-github").checked,
       run_cloud_enum: el("#opt-cloud").checked,
-      run_takeover: el("#opt-takeover").checked,
-      run_tls: el("#opt-tls").checked,
+      run_uncover: el("#opt-uncover").checked,
     };
     const { scan_id } = await api(`/api/programs/${id}/scans`, {
       method: "POST",
@@ -792,6 +874,25 @@ el("#scan-btn").addEventListener("click", async () => {
     btn.disabled = false;
   }
 });
+
+// rescanAsset starts a scan scoped to one asset (POST /api/assets/{id}/scan),
+// reusing the same toolbar checkboxes and the same pollScan status
+// line/refresh logic as a whole-program scan - only one scan runs per
+// program at a time regardless of scope, so there's no separate progress UI
+// to build.
+async function rescanAsset(assetID) {
+  const programId = state.currentProgramId;
+  if (programId == null) return;
+  try {
+    const { scan_id } = await api(`/api/assets/${assetID}/scan`, {
+      method: "POST",
+      body: JSON.stringify(buildAssetScanBody()),
+    });
+    pollScan(programId, scan_id);
+  } catch (err) {
+    showToast("Error: " + err.message, "error");
+  }
+}
 
 el("#stop-scan-btn").addEventListener("click", async () => {
   if (!state.currentScanId) return;
@@ -866,6 +967,10 @@ function renderScanDiff(events) {
     { kind: "new_endpoint", title: "New JS endpoints", empty: "No new JS endpoints in this scan." },
     { kind: "new_secret", title: "New secrets found", empty: "No new secrets in this scan." },
     { kind: "new_cors_finding", title: "New CORS findings", empty: "No new CORS findings in this scan." },
+    { kind: "new_takeover_finding", title: "New takeover findings", empty: "No new takeover findings in this scan." },
+    { kind: "new_tls_finding", title: "New TLS findings", empty: "No new TLS findings in this scan." },
+    { kind: "new_dns_finding", title: "New DNS findings", empty: "No new DNS findings in this scan." },
+    { kind: "new_crawled_url", title: "New crawled URLs", empty: "No new crawled URLs in this scan." },
   ];
 
   for (const sec of sections) {
@@ -973,6 +1078,7 @@ function pollScan(programId, scanId) {
         loadAssets(programId), loadScans(programId), loadVulnerabilities(programId), loadFuzzHits(programId),
         loadArchivedURLs(programId), loadParamHits(programId), loadJSFindings(programId), loadCORSFindings(programId),
         loadGitHubFindings(programId), loadCloudFindings(programId), loadTakeoverFindings(programId), loadTLSFindings(programId),
+        loadDNSFindings(programId), loadCrawledURLs(programId),
       ]);
       renderOverview();
     }
@@ -1179,6 +1285,13 @@ const REPORT_TEMPLATES = {
     asset: f.subdomain || f.host,
     description: `TLS issue \`${f.issue}\` found on \`${f.subdomain || f.host}\`: ${f.detail || "(no further detail)"}.`,
   }),
+  dns: (f) => ({
+    title: f.kind === "zone_transfer" ? `Zone transfer allowed: ${f.subdomain || f.host}` : `DNS finding: ${f.kind}`,
+    asset: f.subdomain || f.host,
+    description: f.kind === "zone_transfer"
+      ? `The authoritative DNS server for \`${f.subdomain || f.host}\` allows an unauthenticated AXFR zone transfer: ${f.value}.`
+      : `DNS finding (\`${f.kind}\`${f.detail ? ", " + f.detail : ""}) on \`${f.subdomain || f.host}\`: ${f.value}.`,
+  }),
 };
 
 // buildReportMarkdown renders the full markdown skeleton for one finding.
@@ -1326,6 +1439,27 @@ function renderArchivedURLs(urls) {
     tr.appendChild(td(u.url, { title: u.url }));
     tr.appendChild(td(u.host));
     tr.appendChild(td(formatLocal(u.first_seen)));
+    tbody.appendChild(tr);
+  }
+}
+
+// ---------- Crawled URLs (katana) ----------
+
+async function loadCrawledURLs(programId) {
+  const urls = await api(`/api/programs/${programId}/crawled-urls`);
+  state.crawledURLs = urls;
+  renderCrawledURLs(urls);
+}
+
+function renderCrawledURLs(urls) {
+  const tbody = el("#crawled-table tbody");
+  tbody.innerHTML = "";
+  urls = filterBySearch(urls, "#crawled-search", (u) => [u.url, u.subdomain]);
+  for (const u of urls) {
+    const tr = document.createElement("tr");
+    tr.appendChild(td(u.url, { title: u.url }));
+    tr.appendChild(td(u.subdomain));
+    tr.appendChild(td(formatLocal(u.found_at)));
     tbody.appendChild(tr);
   }
 }
@@ -1590,6 +1724,44 @@ function renderTLSFindings(findings) {
   }
 }
 
+// ---------- DNS/Infrastructure Findings ----------
+
+async function loadDNSFindings(programId) {
+  const findings = await api(`/api/programs/${programId}/dns-findings`);
+  state.dnsFindings = findings;
+  renderDNSFindings(findings);
+}
+
+function dnsSeverityClass(f) {
+  if (f.kind === "zone_transfer") return "sev-critical";
+  if (f.kind === "waf" || f.kind === "cdn" || f.kind === "cloud" || f.kind === "asn") return "sev-info";
+  return "sev-info"; // record
+}
+
+function renderDNSFindings(findings) {
+  const tbody = el("#dns-table tbody");
+  tbody.innerHTML = "";
+  findings = filterBySearch(findings, "#dns-search", (f) => [f.subdomain, f.detail, f.value]);
+  for (const f of findings) {
+    const tr = document.createElement("tr");
+
+    const kindTd = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = "sev-badge " + dnsSeverityClass(f);
+    badge.textContent = f.kind;
+    kindTd.appendChild(badge);
+    tr.appendChild(kindTd);
+
+    tr.appendChild(td(f.subdomain));
+    tr.appendChild(td(f.detail));
+    tr.appendChild(td(f.value, { title: f.value }));
+    tr.appendChild(td(formatLocal(f.found_at)));
+    appendTriageCells(tr, "dns", f);
+    appendReportCell(tr, "dns", f);
+    tbody.appendChild(tr);
+  }
+}
+
 // Wire each findings table's search box: debounced, re-renders from the
 // full state.* array (filterBySearch inside each render* function re-reads
 // the box and re-filters) rather than fetching again - same shape as the
@@ -1604,6 +1776,8 @@ function renderTLSFindings(findings) {
   ["#cloud-search", () => renderCloudFindings(state.cloudFindings)],
   ["#takeover-search", () => renderTakeoverFindings(state.takeoverFindings)],
   ["#tls-search", () => renderTLSFindings(state.tlsFindings)],
+  ["#dns-search", () => renderDNSFindings(state.dnsFindings)],
+  ["#crawled-search", () => renderCrawledURLs(state.crawledURLs)],
 ].forEach(([sel, rerender]) => {
   el(sel)?.addEventListener("input", debounce(rerender, 200));
 });
@@ -1673,6 +1847,7 @@ const EXPORT_TYPES = {
   vulns: "vulnerabilities",
   fuzz: "fuzz-hits",
   wayback: "archived-urls",
+  crawled: "crawled-urls",
   params: "param-hits",
   jsfindings: "js-findings",
   cors: "cors-findings",
@@ -1680,11 +1855,14 @@ const EXPORT_TYPES = {
   cloud: "cloud-findings",
   takeover: "takeover-findings",
   tls: "tls-findings",
+  dns: "dns-findings",
   bounties: "bounties",
 };
 
-// setupExportLinks injects (or updates) an "Export CSV" link into each
-// exportable tab's .panel-header, pointing at that program's export endpoint.
+// setupExportLinks injects (or updates) an "Export CSV" link plus a "Print /
+// PDF" button into each exportable tab's .panel-header, pointing at that
+// program's export endpoint. Print uses the browser's own print-to-PDF (see
+// the @media print rules in style.css) - no new dependency, no server work.
 function setupExportLinks(programId) {
   for (const [tab, type] of Object.entries(EXPORT_TYPES)) {
     const header = document.querySelector(`.tab-section[data-tab="${tab}"] .panel-header`);
@@ -1697,6 +1875,18 @@ function setupExportLinks(programId) {
       header.appendChild(link);
     }
     link.href = `/api/programs/${programId}/export?type=${type}`;
+
+    if (!header.querySelector("button.print-btn")) {
+      const printBtn = document.createElement("button");
+      printBtn.type = "button";
+      printBtn.className = "icon-btn print-btn";
+      printBtn.textContent = "Print / PDF";
+      printBtn.addEventListener("click", () => {
+        showTab(tab);
+        window.print();
+      });
+      header.appendChild(printBtn);
+    }
   }
 }
 
@@ -1767,6 +1957,13 @@ const FINDING_SOURCES = [
     detail: (f) => f.detail || "",
     host: (f) => f.subdomain || "",
   },
+  {
+    type: "dns", tab: "dns", get: () => state.dnsFindings,
+    severity: (f) => dnsSeverityClass(f).replace("sev-", ""),
+    title: (f) => `${f.kind}${f.detail ? " (" + f.detail + ")" : ""}`,
+    detail: (f) => f.value || "",
+    host: (f) => f.subdomain || "",
+  },
 ];
 
 const UNIFIED_FINDINGS_LIMIT = 100;
@@ -1798,7 +1995,7 @@ function isQuickWin(type, row) {
 // so the unified/dashboard views can also offer "Draft report".
 const UNIFIED_TYPE_TO_KIND = {
   vuln: "vulnerabilities", github: "github", cloud: "cloud", cors: "cors",
-  js: "js", fuzz: "fuzz", param: "params", takeover: "takeover", tls: "tls",
+  js: "js", fuzz: "fuzz", param: "params", takeover: "takeover", tls: "tls", dns: "dns",
 };
 
 // buildUnifiedFindings merges every finding type into one severity-sortable
@@ -1998,6 +2195,11 @@ function renderOverviewStats() {
   const tlsIssues = state.tlsFindings.filter((f) => f.issue !== "new_san_subdomain").length;
   container.appendChild(statCard("TLS findings", String(state.tlsFindings.length),
     tlsIssues ? `${tlsIssues} certificate issue(s)` : "SAN entries only"));
+  const zoneTransfers = state.dnsFindings.filter((f) => f.kind === "zone_transfer").length;
+  container.appendChild(statCard("DNS findings", String(state.dnsFindings.length),
+    zoneTransfers ? `${zoneTransfers} zone transfer(s) allowed!` : "No zone transfer exposure"));
+  container.appendChild(statCard("Crawled URLs", String(state.crawledURLs.length),
+    state.crawledURLs.length ? "Discovered via crawling" : "None found"));
 }
 
 // Horizontal stacked bar: critical -> info order, widths proportional to count.
@@ -2158,6 +2360,8 @@ async function loadSettings() {
   el("#tg-notify-vulns").checked = !!settings.telegram_notify_vulnerabilities;
   el("#gh-token").value = "";
   el("#gh-token").placeholder = tokenPlaceholder(settings.github_token_set, "Personal access token (no special scopes needed)");
+  el("#uncover-keys").value = "";
+  el("#uncover-keys").placeholder = tokenPlaceholder(settings.uncover_api_keys_set, "One per line: shodan:xxx\ncensys:id:secret\nfofa:email:key");
   el("#scan-retention").value = String(settings.scan_retention_count || 0);
   el("#h1-username").value = settings.hackerone_username || "";
   el("#h1-api-token").value = "";
@@ -2174,6 +2378,7 @@ el("#settings-form").addEventListener("submit", async (e) => {
     telegram_notify_changes: el("#tg-notify-changes").checked,
     telegram_notify_vulnerabilities: el("#tg-notify-vulns").checked,
     github_token: el("#gh-token").value.trim(),
+    uncover_api_keys: el("#uncover-keys").value.trim(),
     scan_retention_count: parseInt(el("#scan-retention").value, 10) || 0,
     hackerone_username: el("#h1-username").value.trim(),
     hackerone_api_token: el("#h1-api-token").value.trim(),

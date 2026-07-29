@@ -6,8 +6,8 @@ package store
 // This deliberately does NOT simply "delete scans past the Nth" - store.Open
 // runs PRAGMA foreign_keys = ON, and every findings table (vulnerabilities,
 // fuzz_hits, cors_findings, js_findings, param_hits, archived_urls,
-// github_findings, cloud_findings, takeover_findings, tls_findings)
-// references scan_id with ON DELETE CASCADE. A finding's scan_id is simply
+// github_findings, cloud_findings, takeover_findings, tls_findings,
+// dns_findings, crawled_urls) references scan_id with ON DELETE CASCADE. A finding's scan_id is simply
 // "the last scan that (re)confirmed it" - findings are never deleted on
 // their own even when a later scan stops reproducing them (see schema.sql).
 // Naively deleting an old scans row would cascade-delete any
@@ -37,7 +37,9 @@ func (s *Store) PruneOldScans(programID int64, keep int) (int64, error) {
 		  AND id NOT IN (SELECT DISTINCT scan_id FROM github_findings)
 		  AND id NOT IN (SELECT DISTINCT scan_id FROM cloud_findings)
 		  AND id NOT IN (SELECT DISTINCT scan_id FROM takeover_findings)
-		  AND id NOT IN (SELECT DISTINCT scan_id FROM tls_findings)`,
+		  AND id NOT IN (SELECT DISTINCT scan_id FROM tls_findings)
+		  AND id NOT IN (SELECT DISTINCT scan_id FROM dns_findings)
+		  AND id NOT IN (SELECT DISTINCT scan_id FROM crawled_urls)`,
 		programID, programID, keep)
 	if err != nil {
 		return 0, err

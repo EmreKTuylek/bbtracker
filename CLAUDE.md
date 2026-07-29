@@ -19,7 +19,7 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 | Path | Responsibility |
 |---|---|
 | `cmd/bbtracker/main.go` | Entry point: flags, opens store, builds server, opens browser, listens. |
-| `internal/store/schema.sql` | SQLite DDL (programs, scopes, scans, assets, probes, bounties, vulnerabilities, scan_events, fuzz_hits, archived_urls, param_hits, js_findings, cors_findings, github_findings, cloud_findings, takeover_findings, tls_findings). |
+| `internal/store/schema.sql` | SQLite DDL (programs, scopes, scans, assets, probes, bounties, vulnerabilities, scan_events, fuzz_hits, archived_urls, param_hits, js_findings, cors_findings, github_findings, cloud_findings, takeover_findings, tls_findings, dns_findings, crawled_urls). |
 | `internal/store/models.go` | Row structs shared by store + JSON API. |
 | `internal/store/store.go` | `Open`/`Close`, embeds schema, pure-Go driver (`modernc.org/sqlite`). |
 | `internal/store/migrate.go` | `ALTER TABLE ... ADD COLUMN` migrations for existing DBs (see below). |
@@ -37,7 +37,9 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 | `internal/store/cloud_findings.go` | `SaveCloudFinding` (upsert by program+provider+bucket+kind), `ListCloudFindings`. |
 | `internal/store/takeover_findings.go` | `SaveTakeoverFinding` (upsert by asset+service), `ListTakeoverFindings`. |
 | `internal/store/tls_findings.go` | `SaveTLSFinding` (upsert by asset+issue+detail), `ListTLSFindings`. |
-| `internal/store/triage.go` | `UpdateFindingTriage` — generic status/notes update across all 9 findings tables via a fixed kind→table whitelist. |
+| `internal/store/dns_findings.go` | `SaveDNSFinding` (upsert by asset+kind+detail+value), `ListDNSFindings`. |
+| `internal/store/crawled_urls.go` | `SaveCrawledURL` (upsert by asset+url), `ListCrawledURLs`. |
+| `internal/store/triage.go` | `UpdateFindingTriage` — generic status/notes update across all 10 findings tables via a fixed kind→table whitelist. |
 | `internal/store/retention.go` | `PruneOldScans` — safely deletes old `scans` rows that no finding table still references. |
 | `internal/store/settings.go` | Single-row `app_settings` (Telegram bot token/chat id/enabled + per-category notify flags, GitHub token, scan retention count). |
 | `internal/recon/recon.go` | `Engine`/`Subfinder`/`HTTPProbe`/`VulnScanner` interfaces + orchestration (`Run`). |
@@ -56,6 +58,9 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 | `internal/recon/wordlists/cloud_suffixes.txt` | Embedded default cloud-bucket-name suffix/prefix wordlist, ~49 curated entries. |
 | `internal/recon/takeover.go` | `SimpleTakeoverScanner`: hand-rolled subdomain-takeover checker (CNAME lookup + fixed hosting-provider fingerprint list), implements `TakeoverScanner`. |
 | `internal/recon/tlsinfo.go` | `SimpleTLSScanner`: stdlib `crypto/tls` certificate inspector (expiry, self-signed, hostname mismatch, weak protocol, SAN entries), implements `TLSScanner`. |
+| `internal/recon/dnsinfra.go` | `SimpleDNSInfraScanner`: DNS record enumeration + AXFR zone-transfer probe (`dnsx`) + WAF/CDN/cloud attribution (`cdncheck`) + ASN attribution (`asnmap`), implements `DNSScanner`. |
+| `internal/recon/uncover.go` | `LibUncover`: passive host discovery via Shodan/Censys/FOFA/... (`projectdiscovery/uncover`), implements `PassiveDiscoverer`. |
+| `internal/recon/crawl.go` | `LibKatana`: standard-mode (non-headless) web crawler (`projectdiscovery/katana`), implements `Crawler`. |
 | `internal/scheduler/scheduler.go` | Background goroutine that triggers recurring auto-scans for programs with a schedule enabled. |
 | `internal/telegram/telegram.go` | Telegram Bot API client (`SendMessage`) + `NotifyNewAssets`/`NotifyChangedAssets`/`NotifyNewVulnerabilities`, called from `Engine.Run`. |
 | `internal/server/server.go` | `Server`, routes, `writeJSON`/`readJSON` helpers, static file serving. |
@@ -73,6 +78,8 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 | `internal/server/handlers_cloud.go` | List-cloud-storage-findings handler. |
 | `internal/server/handlers_takeover.go` | List-subdomain-takeover-findings handler. |
 | `internal/server/handlers_tls.go` | List-TLS-findings handler. |
+| `internal/server/handlers_dns.go` | List-DNS-findings handler. |
+| `internal/server/handlers_crawled.go` | List-crawled-URLs handler. |
 | `internal/server/handlers_findings.go` | Generic findings-triage handler (`PATCH /api/findings/{kind}/{id}`). |
 | `internal/server/handlers_export.go` | CSV export handler (`GET /api/programs/{id}/export?type=<t>`). |
 | `internal/server/static/*` | Vanilla JS/CSS/HTML frontend, no build step. |
@@ -108,7 +115,7 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   'done'`) scan; computed in `ListAssets`' SQL, not in Go.
 - **Asset notes**: `assets.notes` is a free-text field for the user's own
   observations, unrelated to findings triage (`triage_notes`, which lives on
-  the 9 findings tables, not `assets`). `PATCH /api/assets/{id}/notes` →
+  the 10 findings tables, not `assets`). `PATCH /api/assets/{id}/notes` →
   `store.UpdateAssetNotes`; no upsert/scan interaction — recon never touches
   this column, only the user does via the Assets table's Notes input.
 - **Schema migrations**: `CREATE TABLE IF NOT EXISTS` in `schema.sql` never adds
@@ -631,7 +638,7 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   which existing `store.List*` method to call (`assets`, `bounties`,
   `vulnerabilities`, `fuzz-hits`, `archived-urls`, `param-hits`, `js-findings`,
   `cors-findings`, `github-findings`, `cloud-findings`, `takeover-findings`,
-  `tls-findings`); unknown type → 400.
+  `tls-findings`, `dns-findings`, `crawled-urls`); unknown type → 400.
   The frontend's `setupExportLinks` injects an "Export CSV" `<a>` (not a fetch)
   into each exportable tab's `.panel-header`, so the browser downloads directly.
   When adding a new findings table, add a `case` here and an `EXPORT_TYPES`
@@ -700,14 +707,14 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   several distinct rows per asset; a plain `(asset_id, issue)` key would
   collapse them into one. `run_tls`/`schedule_run_tls` default to 0. `scan_events`
   kind: `new_tls_finding`.
-- **Findings triage (status/notes)**: all 9 non-asset findings tables
+- **Findings triage (status/notes)**: all 10 non-asset findings tables
   (`vulnerabilities`, `cors_findings`, `fuzz_hits`, `github_findings`,
   `cloud_findings`, `js_findings`, `param_hits`, `takeover_findings`,
-  `tls_findings` — NOT `archived_urls`, which has no triage) carry
+  `tls_findings`, `dns_findings` — NOT `archived_urls`/`crawled_urls`, which have no triage) carry
   `status` (`open`|`accepted_risk`|`false_positive`|`fixed`, default `'open'`)
   and `triage_notes` columns. **One generic endpoint**,
   `PATCH /api/findings/{kind}/{id}` (`handlers_findings.go`), handles all
-  nine — `kind` (e.g. `"cors"`, `"takeover"`) is looked up in
+  ten — `kind` (e.g. `"cors"`, `"takeover"`) is looked up in
   `store.triageTables`, a **fixed Go map** from kind → real table name; the
   table name is never built from request input directly, so there is no SQL-
   injection surface even though `database/sql` can't parameterize identifiers.
@@ -718,7 +725,7 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   ever resetting a status the user already set. Frontend: one shared
   `appendTriageCells(tr, kind, row)` helper (in `app.js`) renders the
   `<select>` + notes `<input>` pair and wires the PATCH call, reused by all
-  nine tables' render functions instead of duplicating the widget nine times.
+  ten tables' render functions instead of duplicating the widget ten times.
 - **Scan phase progress (in-memory, not a DB column)**: `Engine` tracks which
   named phases are currently running per scan in an in-memory
   `map[int64]map[string]bool` (`activePhases`, guarded by `phaseMu`), via
@@ -840,16 +847,16 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   reusing the exact same `store.List*`/`CountAssets`/`ListScans` methods each
   program's own tabs already call, returns one merged payload — per-program
   summaries (`dashboardProgramSummary`: asset count, most recent scan) plus
-  all 9 findings types, each row tagged with `program_id`/`program_name` via
+  all 10 findings types, each row tagged with `program_id`/`program_name` via
   a small per-type wrapper struct (`dashboardVuln`, `dashboardFuzzHit`, …).
   **A generic `dashboardFinding[T any]` wrapper was tried first and doesn't
-  compile** — Go disallows embedding a bare type parameter — so it's 9
+  compile** — Go disallows embedding a bare type parameter — so it's 10
   concrete wrapper types instead, one per finding type; this is more
   boilerplate than generics would have been, but it's the same "repeat the
   shape once per finding type" convention every other findings feature in
-  this codebase already uses (9 tables, 9 `List*`, 9 handlers, 9 render
+  this codebase already uses (10 tables, 10 `List*`, 10 handlers, 10 render
   functions), so it stays consistent rather than being the codebase's first
-  (and only) generics usage. One round trip, not N-programs × 9-endpoints,
+  (and only) generics usage. One round trip, not N-programs × 10-endpoints,
   is the reason this is a backend endpoint at all rather than a client-side
   fan-out loop.
   Frontend: `showDashboard()` (`app.js`) is now the **default view** — shown
@@ -879,14 +886,14 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   keystroke — only `showDashboard()`/`loadDashboard()` itself hits the
   network.
 - **Findings-table search/filter**: before this, only the Assets tab had a
-  search box (`renderAssets`) — the 9 findings tables (vulnerabilities, fuzz,
-  params, JS, CORS, GitHub, cloud, takeover, TLS) and the per-program
+  search box (`renderAssets`) — the 10 findings tables (vulnerabilities, fuzz,
+  params, JS, CORS, GitHub, cloud, takeover, TLS, DNS) and the per-program
   Overview's unified "All findings" panel had none. `filterBySearch(rows,
   inputSel, fields)` (`app.js`, next to `debounce`/`td`) is the shared
   primitive: reads `inputSel`'s current value, and if non-empty keeps only
   rows where `fields(row)` (an array of strings) joins to a case-insensitive
   substring match — same semantics as `renderAssets`' own inline filter,
-  factored out so the other 9 tables don't each reimplement it. Each
+  factored out so the other 10 tables don't each reimplement it. Each
   `renderX(rows)` findings function calls it once, right after `tbody.innerHTML
   = ""`, with a small array of the fields relevant to that type (e.g. CORS:
   `[issue, subdomain, origin_sent]`). A single wiring block right before the
@@ -915,7 +922,7 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   normal severity-sorted view too. Pure frontend classification of fields
   already on the row — no new scanning, no schema/backend change.
 - **Report draft**: a "Draft report" button (`appendReportCell`) on every
-  findings-table row (all 9 tables, plus both unified views) opens a modal
+  findings-table row (all 10 tables, plus both unified views) opens a modal
   (`#report-modal`, styled like the existing `#scan-diff-modal`) with a
   copy-pasteable markdown skeleton generated entirely client-side by
   `buildReportMarkdown` — title, affected asset, program, a per-finding-type
@@ -932,12 +939,146 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   so the two unified views (which only carry `type`) can still resolve the
   right template — the two vocabularies exist because `FINDING_SOURCES`
   predates the triage endpoint's naming; bridging was chosen over renaming
-  one to match the other, which would have touched all 9 findings tables.
+  one to match the other, which would have touched all 10 findings tables.
   `buildUnifiedFindings` carries the original `row` through unchanged
   (needed by the templates) alongside its derived `severity`/`title`/etc.
   fields. Copy-to-clipboard uses `navigator.clipboard`, falling back to
   select-all-and-prompt-Ctrl+C if the Clipboard API is unavailable (e.g. a
   non-secure context).
+- **DNS/infrastructure analysis**: `internal/recon/dnsinfra.go`'s
+  `SimpleDNSInfraScanner` uses three already-vendored ProjectDiscovery
+  libraries that needed **zero new `go.mod` entries** (`cdncheck`, `dnsx`,
+  `asnmap` were already `## explicit` in `vendor/modules.txt`, pulled in
+  transitively by nuclei/subfinder — same precedent as `go-github`, see the
+  GitHub dorking section below) — for each known host: `dnsx.QueryMultiple`
+  for A/AAAA/CNAME/MX/TXT/NS records (`kind="record"`, `detail=<type>`), a
+  `dnsx.AXFR` zone-transfer attempt (`kind="zone_transfer"` on any
+  success — a critical, independently reportable finding on its own: the
+  authoritative server discloses its whole zone to anyone who asks), and,
+  from the host's first resolved A record, `cdncheck.CheckWAF/CheckCDN/
+  CheckCloud` (`kind="waf"|"cdn"|"cloud"`) plus `asnmap.GetData`
+  (`kind="asn"`). **This reverses the "no WAF fingerprinting" non-goal in
+  PRD.md** — that decision predated discovering `cdncheck` was already a
+  zero-cost dependency; PRD.md has been updated to match. Host-only phase
+  (`runDNSPhase`, `run_dns`/`schedule_run_dns`), same concurrent-group
+  placement as takeover/TLS. `dns_findings` is keyed by
+  `(asset_id, kind, detail, value)` — `detail` and `value` are both part of
+  the key (unlike `tls_findings`' `(asset_id, issue, detail)`) because a host
+  can have several distinct records of the same kind (multiple NS/TXT
+  entries). ponytail: none of dnsx/cdncheck/asnmap's calls take a `context`,
+  so a slow resolver can't be interrupted mid-call — only bounded by a
+  per-query timeout (`dnsQueryTimeout`) and the phase-level
+  `dnsWithDeadline` race; upgrade path is a context-aware DNS client if this
+  proves too slow in practice.
+- **Passive host discovery (Shodan/Censys/FOFA/...)**: `internal/recon/
+  uncover.go`'s `LibUncover` wraps `github.com/projectdiscovery/uncover`
+  (also already vendored transitively, zero new `go.mod` entries) to find
+  hosts subfinder's passive-source enumeration misses entirely — unlike
+  every other domain-only tool (wayback/GitHub dork/cloud enum), this one
+  **discovers assets**, so it runs in `Engine.Run`'s sequential discovery
+  prelude alongside subfinder (not the wayback/github/cloud concurrent
+  group), sharing the same `upsertDiscovered` out-of-scope-filter/upsert
+  helper subfinder uses. `assets.source` (already existed) gets the engine
+  name (`"shodan"`, `"censys"`, ...) — no schema change for assets
+  themselves. API keys live in one `app_settings.uncover_api_keys` column
+  (`provider:value` per line, e.g. `censys:id:secret` — multi-part
+  credentials pass through as a single colon-joined value since
+  `sources.Provider.GetKeys()` does that splitting itself), parsed by
+  `parseUncoverKeys`; masked the same way as `github_token`/`telegram_bot_
+  token` in `GET /api/settings` (`uncover_api_keys_set` bool, blank-on-save
+  keeps the existing value). No keys configured → `Discover` returns
+  `(nil, nil)`, a silent no-op, **not** a 400 like GitHub dorking's hard
+  token requirement — running with zero configured search engines is a
+  normal, expected state here. `RunUncover`/`ScheduleRunUncover` are
+  independent of `RunHTTPX` (only need `InScopeDomains`, like
+  `RunGithubDork`/`RunCloudEnum`). ponytail: one generic `hostname:<domain>`
+  query per domain (Shodan's own syntax), not tuned per provider's actual
+  query dialect (FOFA/Censys/etc. each have distinct syntax) — acceptable
+  baseline, but expect variable result relevance across non-Shodan engines;
+  upgrade path is per-agent query templates. Port info in uncover's
+  `host:port` results is discarded in v1 (only the hostname becomes an
+  asset) — a deliberate scope-reduction near the port-scanning non-goal, not
+  an oversight.
+- **Web crawling (katana)**: `internal/recon/crawl.go`'s `LibKatana` wraps
+  `github.com/projectdiscovery/katana` in its **standard (non-headless)**
+  mode — headless mode uses go-rod, which would reintroduce the Leakless/
+  Windows Defender false-positive problem documented earlier in this file
+  (see the Leakless(false) patch section); standard mode has no such
+  dependency. **This is the one genuinely new `go.mod`
+  dependency added across this whole round of features** (`go get
+  github.com/projectdiscovery/katana@latest` + `go mod tidy` + `go mod
+  vendor`), unlike DNS/uncover/GitHub-dorking which were all already
+  vendored transitively. Runs inside `runAssetChain` (the sequential
+  httpx-dependent chain), right after httpx and before nuclei — crawled
+  URLs merge into `assetIDByURL` (keyed the same way httpx's own probed
+  URLs are), so **nuclei/CORS/hidden-params see the wider URL set with zero
+  changes to those three phases** — they already iterate `assetIDByURL` for
+  their input list. **Fuzz is the one exception**: brute-forcing every
+  wordlist entry against every crawled URL as well would multiply request
+  volume (URL × wordlist), so `runAssetChain` captures `rootURLs` (httpx's
+  own probed URLs only) *before* the crawl phase expands `assetIDByURL`, and
+  fuzz uses `rootURLs` instead. **JS analysis is deliberately NOT expanded**
+  with crawled URLs in v1 — `jsAnalysisWithDeadline` needs page *bodies*
+  (`pages map[string]string`), only available from httpx's own
+  `CaptureBody`; katana isn't configured to fetch/store response bodies
+  here, and doing so would need its own size cap and complexity — a
+  documented simplification, not an oversight. A single `standard.Crawler`
+  instance is shared across a small worker pool (`crawlWorkers`) crawling
+  different root URLs concurrently — confirmed safe by reading katana's own
+  CLI (`internal/runner/executer.go` in the katana source), which does
+  exactly this (one shared crawler, a `sizedwaitgroup`, `Crawl()` called
+  concurrently from multiple goroutines), not an assumption. `maxCrawledURLs`
+  (500/scan) bounds total results across every asset — unbounded crawling
+  feeding nuclei/CORS/params could otherwise turn a routine scan into an
+  hours-long one. Persisted in `crawled_urls`, keyed by `(asset_id, url)`
+  (asset-scoped, unlike `archived_urls` which is program-scoped since an
+  archived URL's host may not be a known asset); `scan_events` kind:
+  `new_crawled_url`. `run_crawl`/`schedule_run_crawl` require
+  `run_httpx`/`schedule_run_httpx` (same validation shape as nuclei/fuzz/
+  params/CORS/JS-analysis), and are exposed on both the whole-program scan
+  form and the single-asset "Rescan" button (see below) via the same shared
+  `buildAssetScanBody()` on the frontend.
+  **The Leakless patch must be reapplied after `go mod vendor`**: adding
+  katana required regenerating `vendor/` from scratch, which — exactly as
+  warned elsewhere in this file — silently overwrote
+  `vendor/github.com/projectdiscovery/httpx/runner/headless.go`'s
+  `Leakless(false)` back to upstream's `Leakless(true)`. Reapplied
+  immediately as part of this same change; **any future `go mod vendor` run
+  will do this again** — always `grep -n "Leakless"
+  vendor/github.com/projectdiscovery/httpx/runner/headless.go` right after,
+  and reapply `Leakless(true)` → `Leakless(false)` if it reverted.
+- **Single-asset rescan**: `POST /api/assets/{id}/scan` (`handleStartAssetScan`,
+  a narrower `assetScanRequest` — no subfinder/uncover/wayback/GitHub-dork/
+  cloud-enum, which are domain-scoped and meaningless for one asset) reuses
+  `Engine.Run`/`store.CreateScan` unchanged via a new `store.ScanOptions.
+  AssetID` field (0 = whole-program scan, the existing default; nonzero
+  scopes `Run` to loading just that one asset via the new `store.GetAsset`
+  instead of the domain-discovery/`AssetHosts` branches). `scans.asset_id`
+  (`INTEGER NOT NULL DEFAULT 0`) records which scan targeted which asset —
+  **deliberately not a `REFERENCES assets(id)` foreign key**: with
+  `PRAGMA foreign_keys = ON`, the `0` sentinel would itself violate an FK
+  constraint (no asset has id `0`, `AUTOINCREMENT` starts at 1), so it stays
+  a plain column. Same one-scan-per-program-at-a-time semantics as a
+  whole-program scan (`RunningScanForProgram` has no asset-level
+  granularity) — a subscan and a whole-program scan can't run concurrently
+  either. Frontend: a "Rescan" button per Assets-tab row
+  (`rescanAsset(assetID)`) reuses `buildAssetScanBody()` (the same
+  toolbar checkboxes the whole-program "Scan" button reads, minus the
+  domain-scoped ones) and the existing `pollScan` status line/refresh logic
+  — no new progress UI, since only one scan runs per program at a time
+  regardless of scope.
+- **Screenshot gallery**: `renderGallery()` (`app.js`) is a pure-frontend
+  grid view over `state.assets` — every asset with `probe.has_screenshot`
+  gets a tile (`GET /api/assets/{id}/screenshot`, already existed), no new
+  endpoint or schema change. Reuses the existing `#screenshot-modal`
+  lightbox on click, same as the Assets table's inline thumbnail.
+- **Print / PDF export**: alongside each tab's existing "Export CSV" link,
+  a "Print / PDF" button (`setupExportLinks`) calls `window.print()`; a
+  `@media print` block in `style.css` hides the sidebar/tab-bar/scan
+  controls/pagination and forces tables to full width with
+  `overflow: visible` (a scrollable `.table-wrap` would otherwise clip
+  content when printed). No new dependency — the browser's own
+  print-to-PDF, same as any other webpage.
 
 ## When editing X, look at Y
 

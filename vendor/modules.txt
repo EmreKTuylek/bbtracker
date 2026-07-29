@@ -178,6 +178,9 @@ github.com/Mzack9999/goimpacket/pkg/third_party/smb2/internal/utf16le
 github.com/Mzack9999/goimpacket/pkg/transport
 github.com/Mzack9999/goimpacket/pkg/utf16le
 github.com/Mzack9999/goimpacket/pkg/wmiexec
+# github.com/Mzack9999/jsluice v0.0.0-20260306161058-30114a312f98
+## explicit; go 1.24.0
+github.com/Mzack9999/jsluice
 # github.com/ProtonMail/go-crypto v1.1.6
 ## explicit; go 1.17
 github.com/ProtonMail/go-crypto/bitcurves
@@ -968,8 +971,8 @@ github.com/google/go-github/v30/github
 # github.com/google/go-querystring v1.1.0
 ## explicit; go 1.10
 github.com/google/go-querystring/query
-# github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e
-## explicit; go 1.23
+# github.com/google/pprof v0.0.0-20250423184734-337e5dd93bb4
+## explicit; go 1.23.0
 github.com/google/pprof/profile
 # github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 ## explicit; go 1.13
@@ -1192,6 +1195,9 @@ github.com/lucasb-eyer/go-colorful
 # github.com/lufia/plan9stats v0.0.0-20250827001030-24949be3fa54
 ## explicit; go 1.21
 github.com/lufia/plan9stats
+# github.com/lukasbob/srcset v0.0.0-20190730101422-86b742e617f3
+## explicit; go 1.12
+github.com/lukasbob/srcset
 # github.com/mackerelio/go-osstat v0.2.6
 ## explicit; go 1.23.0
 github.com/mackerelio/go-osstat/cpu
@@ -1275,6 +1281,9 @@ github.com/minio/selfupdate/internal/osext
 # github.com/mitchellh/go-homedir v1.1.0
 ## explicit
 github.com/mitchellh/go-homedir
+# github.com/mitchellh/mapstructure v1.5.0
+## explicit; go 1.14
+github.com/mitchellh/mapstructure
 # github.com/moby/docker-image-spec v1.3.1
 ## explicit; go 1.18
 github.com/moby/docker-image-spec/specs-go/v1
@@ -1340,6 +1349,10 @@ github.com/oasdiff/yaml
 # github.com/oasdiff/yaml3 v0.0.0-20250309153720-d2182401db90
 ## explicit; go 1.22.5
 github.com/oasdiff/yaml3
+# github.com/odvcencio/gotreesitter v0.6.1-0.20260306002001-fbe5983c6f41
+## explicit; go 1.24.0
+github.com/odvcencio/gotreesitter
+github.com/odvcencio/gotreesitter/grammars
 # github.com/oiweiwei/go-msrpc v1.2.12
 ## explicit; go 1.24.1
 github.com/oiweiwei/go-msrpc/dcerpc
@@ -1639,6 +1652,20 @@ github.com/projectdiscovery/interactsh/pkg/server
 github.com/projectdiscovery/interactsh/pkg/server/acme
 github.com/projectdiscovery/interactsh/pkg/settings
 github.com/projectdiscovery/interactsh/pkg/storage
+# github.com/projectdiscovery/katana v1.6.1
+## explicit; go 1.25.7
+github.com/projectdiscovery/katana/pkg/engine/common
+github.com/projectdiscovery/katana/pkg/engine/parser
+github.com/projectdiscovery/katana/pkg/engine/parser/files
+github.com/projectdiscovery/katana/pkg/engine/standard
+github.com/projectdiscovery/katana/pkg/navigation
+github.com/projectdiscovery/katana/pkg/output
+github.com/projectdiscovery/katana/pkg/types
+github.com/projectdiscovery/katana/pkg/utils
+github.com/projectdiscovery/katana/pkg/utils/extensions
+github.com/projectdiscovery/katana/pkg/utils/filters
+github.com/projectdiscovery/katana/pkg/utils/queue
+github.com/projectdiscovery/katana/pkg/utils/scope
 # github.com/projectdiscovery/ldapserver v1.0.2-0.20240219154113-dcc758ebc0cb
 ## explicit; go 1.14
 github.com/projectdiscovery/ldapserver
@@ -2147,6 +2174,9 @@ github.com/spf13/cast/internal
 # github.com/spf13/pflag v1.0.10
 ## explicit; go 1.12
 github.com/spf13/pflag
+# github.com/stoewer/go-strcase v1.3.1
+## explicit; go 1.11
+github.com/stoewer/go-strcase
 # github.com/syndtr/goleveldb v1.0.0
 ## explicit
 github.com/syndtr/goleveldb/leveldb
@@ -2236,6 +2266,9 @@ github.com/ulikunitz/xz/lzma
 # github.com/valyala/bytebufferpool v1.0.0
 ## explicit
 github.com/valyala/bytebufferpool
+# github.com/valyala/fasttemplate v1.2.2
+## explicit; go 1.12
+github.com/valyala/fasttemplate
 # github.com/vmihailenco/bufpool v0.1.11
 ## explicit; go 1.13
 github.com/vmihailenco/bufpool
@@ -2521,6 +2554,7 @@ golang.org/x/crypto/ssh/knownhosts
 ## explicit; go 1.25.0
 golang.org/x/exp/constraints
 golang.org/x/exp/maps
+golang.org/x/exp/slices
 # golang.org/x/mod v0.36.0
 ## explicit; go 1.25.0
 golang.org/x/mod/internal/lazyregexp
@@ -2649,6 +2683,9 @@ gopkg.in/ini.v1
 # gopkg.in/warnings.v0 v0.1.2
 ## explicit
 gopkg.in/warnings.v0
+# gopkg.in/yaml.v2 v2.4.0
+## explicit; go 1.15
+gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3

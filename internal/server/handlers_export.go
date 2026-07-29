@@ -203,6 +203,28 @@ func (s *Server) exportRows(programID int64, kind string) ([]string, [][]string,
 			rows = append(rows, []string{f.Subdomain, f.Issue, f.Detail, f.FoundAt, f.Status, f.TriageNotes})
 		}
 		return []string{"subdomain", "issue", "detail", "found_at", "status", "triage_notes"}, rows, nil
+
+	case "dns-findings":
+		list, err := s.st.ListDNSFindings(programID)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows := make([][]string, 0, len(list))
+		for _, f := range list {
+			rows = append(rows, []string{f.Subdomain, f.Kind, f.Detail, f.Value, f.FoundAt, f.Status, f.TriageNotes})
+		}
+		return []string{"subdomain", "kind", "detail", "value", "found_at", "status", "triage_notes"}, rows, nil
+
+	case "crawled-urls":
+		list, err := s.st.ListCrawledURLs(programID)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows := make([][]string, 0, len(list))
+		for _, u := range list {
+			rows = append(rows, []string{u.Subdomain, u.URL, u.FoundAt})
+		}
+		return []string{"subdomain", "url", "found_at"}, rows, nil
 	}
 	return nil, nil, nil
 }

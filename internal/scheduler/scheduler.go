@@ -73,6 +73,9 @@ func (s *Scheduler) tick() {
 			RunCloudEnum:       p.ScheduleRunCloudEnum,
 			RunTakeover:        p.ScheduleRunTakeover,
 			RunTLS:             p.ScheduleRunTLS,
+			RunDNS:             p.ScheduleRunDNS,
+			RunUncover:         p.ScheduleRunUncover,
+			RunCrawl:           p.ScheduleRunCrawl,
 		}
 		scanID, err := s.st.CreateScan(p.ID, opts, "scheduled")
 		if err != nil {

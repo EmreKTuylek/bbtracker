@@ -12,6 +12,7 @@ const programColumns = `id, name, platform, url, notes, created_at,
 	schedule_params_wordlist_path, schedule_run_jsanalysis, schedule_run_cors,
 	schedule_cors_wordlist_path,
 	schedule_run_github_dork, schedule_run_cloud_enum, schedule_run_takeover, schedule_run_tls,
+	schedule_run_dns, schedule_run_uncover, schedule_run_crawl,
 	schedule_next_run_at, schedule_last_run_at`
 
 // scanProgram scans one programColumns row into a Program.
@@ -19,13 +20,13 @@ func scanProgram(row interface{ Scan(...any) error }) (*Program, error) {
 	var p Program
 	var enabled, runSubfinder, runHTTPX, screenshot, runNuclei, runFuzz int
 	var runWayback, runParams, runJSAnalysis, runCORS, runGithubDork, runCloudEnum int
-	var runTakeover, runTLS int
+	var runTakeover, runTLS, runDNS, runUncover, runCrawl int
 	var nextRun, lastRun sql.NullString
 	err := row.Scan(&p.ID, &p.Name, &p.Platform, &p.URL, &p.Notes, &p.CreatedAt,
 		&enabled, &p.ScheduleIntervalDays, &p.ScheduleTimeOfDay, &runSubfinder, &runHTTPX, &screenshot, &runNuclei,
 		&runFuzz, &p.ScheduleFuzzWordlistPath, &runWayback, &runParams, &p.ScheduleParamsWordlistPath,
 		&runJSAnalysis, &runCORS, &p.ScheduleCORSWordlistPath,
-		&runGithubDork, &runCloudEnum, &runTakeover, &runTLS, &nextRun, &lastRun)
+		&runGithubDork, &runCloudEnum, &runTakeover, &runTLS, &runDNS, &runUncover, &runCrawl, &nextRun, &lastRun)
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +44,9 @@ func scanProgram(row interface{ Scan(...any) error }) (*Program, error) {
 	p.ScheduleRunCloudEnum = runCloudEnum != 0
 	p.ScheduleRunTakeover = runTakeover != 0
 	p.ScheduleRunTLS = runTLS != 0
+	p.ScheduleRunDNS = runDNS != 0
+	p.ScheduleRunUncover = runUncover != 0
+	p.ScheduleRunCrawl = runCrawl != 0
 	p.ScheduleNextRunAt = nextRun.String
 	p.ScheduleLastRunAt = lastRun.String
 	return &p, nil

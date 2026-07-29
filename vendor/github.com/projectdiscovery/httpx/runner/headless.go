@@ -51,13 +51,13 @@ func NewBrowser(proxy string, useLocal bool, optionalArgs map[string]string) (*B
 	// pids := processutil.FindProcesses(processutil.IsChromeProcess)
 
 	// bbtracker patch: Leakless(false), not (true). go-rod's leakless helper
-	// extracts a small guard binary to a temp dir and execs it to supervise
-	// Chrome (so it gets force-killed if the parent process ever dies) - but
-	// that extract-then-exec-from-temp pattern is a common Windows Defender/AV
-	// false-positive trigger. Leakless(false) launches Chrome directly with
-	// exec.Command instead, at the cost of no automatic orphaned-Chrome
-	// cleanup if bbtracker itself crashes mid-screenshot (rare, and the user
-	// can kill it manually via Task Manager). See CLAUDE.md's vendor patch note.
+	// extracts a small guard binary to a fixed temp path and execs it to
+	// supervise/force-kill Chrome if the parent process dies - that
+	// extract-then-exec-from-temp pattern is a common Windows Defender/AV
+	// false-positive trigger. Leakless(false) makes go-rod exec Chrome
+	// directly instead. See CLAUDE.md's Leakless section - this patch is
+	// silently overwritten by any future `go mod vendor` and MUST be
+	// reapplied immediately after.
 	chromeLauncher := launcher.New().
 		Leakless(false).
 		Set("disable-gpu", "true").

@@ -19,6 +19,7 @@ type settingsRequest struct {
 	ScanRetentionCount            int    `json:"scan_retention_count"`
 	HackerOneUsername             string `json:"hackerone_username"`
 	HackerOneAPIToken             string `json:"hackerone_api_token"`
+	UncoverAPIKeys                string `json:"uncover_api_keys"`
 }
 
 // settingsView is what GET /api/settings returns: everything except the
@@ -41,6 +42,7 @@ type settingsView struct {
 	ScanRetentionCount            int    `json:"scan_retention_count"`
 	HackerOneUsername             string `json:"hackerone_username"`
 	HackerOneAPITokenSet          bool   `json:"hackerone_api_token_set"`
+	UncoverAPIKeysSet             bool   `json:"uncover_api_keys_set"`
 }
 
 func toSettingsView(s *store.Settings) settingsView {
@@ -55,6 +57,7 @@ func toSettingsView(s *store.Settings) settingsView {
 		ScanRetentionCount:            s.ScanRetentionCount,
 		HackerOneUsername:             s.HackerOneUsername,
 		HackerOneAPITokenSet:          s.HackerOneAPIToken != "",
+		UncoverAPIKeysSet:             s.UncoverAPIKeys != "",
 	}
 }
 
@@ -98,6 +101,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if h1Token == "" {
 		h1Token = current.HackerOneAPIToken
 	}
+	uncoverKeys := req.UncoverAPIKeys
+	if uncoverKeys == "" {
+		uncoverKeys = current.UncoverAPIKeys
+	}
 
 	if req.TelegramEnabled && (botToken == "" || req.TelegramChatID == "") {
 		writeError(w, http.StatusBadRequest, "bot token and chat id are required to enable notifications")
@@ -106,7 +113,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := s.st.UpdateSettings(botToken, req.TelegramChatID, req.TelegramEnabled,
 		req.TelegramNotifyNewAssets, req.TelegramNotifyChanges, req.TelegramNotifyVulnerabilities, githubToken,
-		req.ScanRetentionCount, req.HackerOneUsername, h1Token)
+		req.ScanRetentionCount, req.HackerOneUsername, h1Token, uncoverKeys)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

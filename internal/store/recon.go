@@ -8,13 +8,14 @@ import "database/sql"
 func (s *Store) CreateScan(programID int64, opts ScanOptions, triggeredBy string) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO scans (program_id, status, run_subfinder, run_httpx, screenshot, run_nuclei,
 			run_fuzz, fuzz_wordlist_path, run_wayback, run_params, params_wordlist_path, run_jsanalysis, run_cors,
-			cors_wordlist_path, run_github_dork, run_cloud_enum, run_takeover, run_tls, triggered_by)
-		VALUES (?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			cors_wordlist_path, run_github_dork, run_cloud_enum, run_takeover, run_tls, run_dns, run_uncover, run_crawl, asset_id, triggered_by)
+		VALUES (?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		programID, boolToInt(opts.RunSubfinder), boolToInt(opts.RunHTTPX), boolToInt(opts.Screenshot),
 		boolToInt(opts.RunNuclei), boolToInt(opts.RunFuzz), opts.FuzzWordlistPath,
 		boolToInt(opts.RunWayback), boolToInt(opts.RunParams), opts.ParamsWordlistPath,
 		boolToInt(opts.RunJSAnalysis), boolToInt(opts.RunCORS), opts.CORSWordlistPath, boolToInt(opts.RunGithubDork),
-		boolToInt(opts.RunCloudEnum), boolToInt(opts.RunTakeover), boolToInt(opts.RunTLS), triggeredBy)
+		boolToInt(opts.RunCloudEnum), boolToInt(opts.RunTakeover), boolToInt(opts.RunTLS), boolToInt(opts.RunDNS),
+		boolToInt(opts.RunUncover), boolToInt(opts.RunCrawl), opts.AssetID, triggeredBy)
 	if err != nil {
 		return 0, err
 	}
@@ -34,17 +35,17 @@ func (s *Store) GetScan(id int64) (*Scan, error) {
 	var finished sql.NullString
 	var runSubfinder, runHTTPX, screenshot, runNuclei, runFuzz int
 	var runWayback, runParams, runJSAnalysis, runCORS, runGithubDork, runCloudEnum int
-	var runTakeover, runTLS int
+	var runTakeover, runTLS, runDNS, runUncover, runCrawl int
 	err := s.db.QueryRow(`SELECT id, program_id, status, started_at, finished_at,
 		new_assets_count, error, run_subfinder, run_httpx, screenshot, run_nuclei, run_fuzz, fuzz_wordlist_path,
 		run_wayback, run_params, params_wordlist_path, run_jsanalysis, run_cors, cors_wordlist_path,
 		run_github_dork, run_cloud_enum,
-		run_takeover, run_tls, triggered_by FROM scans WHERE id = ?`, id).
+		run_takeover, run_tls, run_dns, run_uncover, run_crawl, asset_id, triggered_by FROM scans WHERE id = ?`, id).
 		Scan(&sc.ID, &sc.ProgramID, &sc.Status, &sc.StartedAt, &finished, &sc.NewAssetsCount, &sc.Error,
 			&runSubfinder, &runHTTPX, &screenshot, &runNuclei, &runFuzz, &sc.FuzzWordlistPath,
 			&runWayback, &runParams, &sc.ParamsWordlistPath, &runJSAnalysis, &runCORS, &sc.CORSWordlistPath,
 			&runGithubDork,
-			&runCloudEnum, &runTakeover, &runTLS, &sc.TriggeredBy)
+			&runCloudEnum, &runTakeover, &runTLS, &runDNS, &runUncover, &runCrawl, &sc.AssetID, &sc.TriggeredBy)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -65,6 +66,9 @@ func (s *Store) GetScan(id int64) (*Scan, error) {
 	sc.RunCloudEnum = runCloudEnum != 0
 	sc.RunTakeover = runTakeover != 0
 	sc.RunTLS = runTLS != 0
+	sc.RunDNS = runDNS != 0
+	sc.RunUncover = runUncover != 0
+	sc.RunCrawl = runCrawl != 0
 	return &sc, nil
 }
 
@@ -163,6 +167,23 @@ func (s *Store) GetProbe(assetID int64) (*Probe, error) {
 	p.ScannedAt = scannedAt.String
 	p.IP = ip.String
 	return &p, nil
+}
+
+// GetAsset returns a single asset by id, or nil if it doesn't exist. Used by
+// the single-asset "Rescan" endpoint (handleStartAssetScan) to resolve the
+// asset's hostname/program before starting a scan scoped to just that asset.
+func (s *Store) GetAsset(assetID int64) (*Asset, error) {
+	var a Asset
+	err := s.db.QueryRow(`SELECT id, program_id, subdomain, source, notes, first_seen, last_seen
+		FROM assets WHERE id = ?`, assetID).
+		Scan(&a.ID, &a.ProgramID, &a.Subdomain, &a.Source, &a.Notes, &a.FirstSeen, &a.LastSeen)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 // AssetHosts returns a program's known asset ids keyed by hostname, so a
@@ -268,7 +289,7 @@ func (s *Store) ListScans(programID int64) ([]Scan, error) {
 			new_assets_count, error, run_subfinder, run_httpx, screenshot, run_nuclei, run_fuzz, fuzz_wordlist_path,
 			run_wayback, run_params, params_wordlist_path, run_jsanalysis, run_cors, cors_wordlist_path,
 			run_github_dork, run_cloud_enum,
-			run_takeover, run_tls, triggered_by
+			run_takeover, run_tls, run_dns, run_uncover, run_crawl, asset_id, triggered_by
 		FROM scans WHERE program_id = ? ORDER BY id DESC`, programID)
 	if err != nil {
 		return nil, err
@@ -280,11 +301,11 @@ func (s *Store) ListScans(programID int64) ([]Scan, error) {
 		var finished sql.NullString
 		var runSubfinder, runHTTPX, screenshot, runNuclei, runFuzz int
 		var runWayback, runParams, runJSAnalysis, runCORS, runGithubDork, runCloudEnum int
-		var runTakeover, runTLS int
+		var runTakeover, runTLS, runDNS, runUncover, runCrawl int
 		if err := rows.Scan(&sc.ID, &sc.ProgramID, &sc.Status, &sc.StartedAt, &finished,
 			&sc.NewAssetsCount, &sc.Error, &runSubfinder, &runHTTPX, &screenshot, &runNuclei,
 			&runFuzz, &sc.FuzzWordlistPath, &runWayback, &runParams, &sc.ParamsWordlistPath,
-			&runJSAnalysis, &runCORS, &sc.CORSWordlistPath, &runGithubDork, &runCloudEnum, &runTakeover, &runTLS, &sc.TriggeredBy); err != nil {
+			&runJSAnalysis, &runCORS, &sc.CORSWordlistPath, &runGithubDork, &runCloudEnum, &runTakeover, &runTLS, &runDNS, &runUncover, &runCrawl, &sc.AssetID, &sc.TriggeredBy); err != nil {
 			return nil, err
 		}
 		sc.FinishedAt = finished.String
@@ -301,6 +322,9 @@ func (s *Store) ListScans(programID int64) ([]Scan, error) {
 		sc.RunCloudEnum = runCloudEnum != 0
 		sc.RunTakeover = runTakeover != 0
 		sc.RunTLS = runTLS != 0
+		sc.RunDNS = runDNS != 0
+		sc.RunUncover = runUncover != 0
+		sc.RunCrawl = runCrawl != 0
 		out = append(out, sc)
 	}
 	return out, rows.Err()

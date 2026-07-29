@@ -74,3 +74,14 @@ func hostOriginCheck(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// noCache forces browsers to revalidate the embedded frontend on every load
+// instead of trusting cached Last-Modified/ETag values, which never change
+// across rebuilds since embed.FS reports a fixed zero-value ModTime for
+// every file - see the call site in routes().
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}

@@ -41,7 +41,12 @@ func (s *Server) routes() {
 	if err != nil {
 		panic(err) // programmer error: static dir must be embedded
 	}
-	s.mux.Handle("/", http.FileServerFS(staticRoot))
+	// embed.FS reports a fixed zero-value ModTime for every file, so
+	// http.FileServerFS's Last-Modified/ETag validators never change across
+	// rebuilds - browsers can keep serving a stale cached app.js/index.html
+	// indefinitely even after the binary is rebuilt. no-cache forces a
+	// revalidation request every load instead.
+	s.mux.Handle("/", noCache(http.FileServerFS(staticRoot)))
 
 	// Dashboard (cross-program overview).
 	s.mux.HandleFunc("GET /api/dashboard", s.handleDashboard)
@@ -61,6 +66,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/programs/{id}/assets", s.handleListAssets)
 	s.mux.HandleFunc("GET /api/assets/{id}/screenshot", s.handleGetAssetScreenshot)
 	s.mux.HandleFunc("PATCH /api/assets/{id}/notes", s.handleUpdateAssetNotes)
+	s.mux.HandleFunc("POST /api/assets/{id}/scan", s.handleStartAssetScan)
 
 	// Recon.
 	s.mux.HandleFunc("POST /api/programs/{id}/scans", s.handleStartScan)
@@ -106,6 +112,12 @@ func (s *Server) routes() {
 
 	// TLS certificate findings.
 	s.mux.HandleFunc("GET /api/programs/{id}/tls-findings", s.handleListTLSFindings)
+
+	// DNS/infrastructure findings (records, zone-transfer, WAF/CDN/cloud/ASN).
+	s.mux.HandleFunc("GET /api/programs/{id}/dns-findings", s.handleListDNSFindings)
+
+	// Katana-crawled URLs.
+	s.mux.HandleFunc("GET /api/programs/{id}/crawled-urls", s.handleListCrawledURLs)
 
 	// Findings triage (status/notes) - one generic endpoint across all findings tables.
 	s.mux.HandleFunc("PATCH /api/findings/{kind}/{id}", s.handleUpdateFindingTriage)

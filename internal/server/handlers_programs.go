@@ -160,6 +160,9 @@ type scheduleRequest struct {
 	RunCloudEnum       bool   `json:"run_cloud_enum"`
 	RunTakeover        bool   `json:"run_takeover"`
 	RunTLS             bool   `json:"run_tls"`
+	RunDNS             bool   `json:"run_dns"`
+	RunUncover         bool   `json:"run_uncover"`
+	RunCrawl           bool   `json:"run_crawl"`
 }
 
 // handleUpdateSchedule sets a program's recurring auto-scan configuration.
@@ -201,7 +204,7 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	anyTool := req.RunSubfinder || req.RunHTTPX || req.RunNuclei || req.RunFuzz ||
 		req.RunWayback || req.RunParams || req.RunJSAnalysis || req.RunCORS ||
-		req.RunGithubDork || req.RunCloudEnum || req.RunTakeover || req.RunTLS
+		req.RunGithubDork || req.RunCloudEnum || req.RunTakeover || req.RunTLS || req.RunDNS || req.RunUncover || req.RunCrawl
 	if req.Enabled && !anyTool {
 		writeError(w, http.StatusBadRequest, "select at least one tool to run")
 		return
@@ -226,6 +229,10 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "CORS scanning requires the HTTP probe tool")
 		return
 	}
+	if req.Enabled && req.RunCrawl && !req.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "crawling requires the HTTP probe tool")
+		return
+	}
 	if req.Enabled && req.RunGithubDork {
 		settings, err := s.st.GetSettings()
 		if err != nil {
@@ -246,7 +253,7 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	updated, err := s.st.UpdateSchedule(id, req.Enabled, req.IntervalDays, req.TimeOfDay, req.RunSubfinder, req.RunHTTPX,
 		req.Screenshot, req.RunNuclei, req.RunFuzz, req.FuzzWordlistPath,
 		req.RunWayback, req.RunParams, req.ParamsWordlistPath, req.RunJSAnalysis, req.RunCORS, req.CORSWordlistPath,
-		req.RunGithubDork, req.RunCloudEnum, req.RunTakeover, req.RunTLS)
+		req.RunGithubDork, req.RunCloudEnum, req.RunTakeover, req.RunTLS, req.RunDNS, req.RunUncover, req.RunCrawl)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

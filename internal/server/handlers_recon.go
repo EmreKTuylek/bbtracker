@@ -29,6 +29,9 @@ type scanRequest struct {
 	RunCloudEnum       *bool   `json:"run_cloud_enum"`
 	RunTakeover        *bool   `json:"run_takeover"`
 	RunTLS             *bool   `json:"run_tls"`
+	RunDNS             *bool   `json:"run_dns"`
+	RunUncover         *bool   `json:"run_uncover"`
+	RunCrawl           *bool   `json:"run_crawl"`
 }
 
 func stringOr(p *string, def string) string {
@@ -128,6 +131,9 @@ func (s *Server) handleStartScan(w http.ResponseWriter, r *http.Request) {
 		RunCloudEnum:       boolOr(req.RunCloudEnum, false),
 		RunTakeover:        boolOr(req.RunTakeover, false),
 		RunTLS:             boolOr(req.RunTLS, false),
+		RunDNS:             boolOr(req.RunDNS, false),
+		RunUncover:         boolOr(req.RunUncover, false),
+		RunCrawl:           boolOr(req.RunCrawl, false),
 	}
 	if !opts.AnyToolEnabled() {
 		writeError(w, http.StatusBadRequest, "select at least one tool to run")
@@ -169,6 +175,10 @@ func (s *Server) handleStartScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "CORS scanning requires the HTTP probe tool")
 		return
 	}
+	if opts.RunCrawl && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "crawling requires the HTTP probe tool")
+		return
+	}
 	if opts.RunGithubDork {
 		settings, err := s.st.GetSettings()
 		if err != nil {
@@ -188,6 +198,136 @@ func (s *Server) handleStartScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go s.engine.Run(context.Background(), programID, scanID, opts)
+
+	writeJSON(w, http.StatusAccepted, map[string]int64{"scan_id": scanID})
+}
+
+// assetScanRequest is the body for POST /api/assets/{id}/scan - the Assets
+// tab's "Rescan" button. Deliberately a narrower subset of scanRequest: it
+// omits subfinder/uncover/wayback/github-dork/cloud-enum, which are
+// domain-scoped tools that don't make sense targeted at a single asset.
+type assetScanRequest struct {
+	RunHTTPX           *bool   `json:"run_httpx"`
+	Screenshot         *bool   `json:"screenshot"`
+	RunNuclei          *bool   `json:"run_nuclei"`
+	RunFuzz            *bool   `json:"run_fuzz"`
+	FuzzWordlistPath   *string `json:"fuzz_wordlist_path"`
+	RunParams          *bool   `json:"run_params"`
+	ParamsWordlistPath *string `json:"params_wordlist_path"`
+	RunJSAnalysis      *bool   `json:"run_jsanalysis"`
+	RunCORS            *bool   `json:"run_cors"`
+	CORSWordlistPath   *string `json:"cors_wordlist_path"`
+	RunTakeover        *bool   `json:"run_takeover"`
+	RunTLS             *bool   `json:"run_tls"`
+	RunDNS             *bool   `json:"run_dns"`
+	RunCrawl           *bool   `json:"run_crawl"`
+}
+
+// handleStartAssetScan starts a scan scoped to a single known asset (opts.AssetID),
+// reusing the exact same Engine.Run/CreateScan path as a whole-program scan -
+// see the AssetID branch in Engine.Run. Rejected the same way as a
+// whole-program scan if one is already running for the asset's program
+// (RunningScanForProgram has no asset-level granularity; only one scan runs
+// per program at a time regardless of scope).
+func (s *Server) handleStartAssetScan(w http.ResponseWriter, r *http.Request) {
+	assetID, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	asset, err := s.st.GetAsset(assetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if asset == nil {
+		writeError(w, http.StatusNotFound, "asset not found")
+		return
+	}
+
+	running, err := s.st.RunningScanForProgram(asset.ProgramID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if running > 0 {
+		writeError(w, http.StatusConflict, "a scan is already running for this program")
+		return
+	}
+
+	var req assetScanRequest
+	if err := readJSON(r, &req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	opts := store.ScanOptions{
+		RunHTTPX:           boolOr(req.RunHTTPX, true),
+		Screenshot:         boolOr(req.Screenshot, false),
+		RunNuclei:          boolOr(req.RunNuclei, false),
+		RunFuzz:            boolOr(req.RunFuzz, false),
+		FuzzWordlistPath:   stringOr(req.FuzzWordlistPath, ""),
+		RunParams:          boolOr(req.RunParams, false),
+		ParamsWordlistPath: stringOr(req.ParamsWordlistPath, ""),
+		RunJSAnalysis:      boolOr(req.RunJSAnalysis, false),
+		RunCORS:            boolOr(req.RunCORS, false),
+		CORSWordlistPath:   stringOr(req.CORSWordlistPath, ""),
+		RunTakeover:        boolOr(req.RunTakeover, false),
+		RunTLS:             boolOr(req.RunTLS, false),
+		RunDNS:             boolOr(req.RunDNS, false),
+		RunCrawl:           boolOr(req.RunCrawl, false),
+		AssetID:            assetID,
+	}
+	if !opts.AnyToolEnabled() {
+		writeError(w, http.StatusBadRequest, "select at least one tool to run")
+		return
+	}
+	if err := validateWordlistPath(opts.FuzzWordlistPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateWordlistPath(opts.ParamsWordlistPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateWordlistPath(opts.CORSWordlistPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if opts.Screenshot && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "screenshot requires the HTTP probe tool")
+		return
+	}
+	if opts.RunNuclei && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "nuclei requires the HTTP probe tool")
+		return
+	}
+	if opts.RunFuzz && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "fuzzing requires the HTTP probe tool")
+		return
+	}
+	if opts.RunParams && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "hidden parameter discovery requires the HTTP probe tool")
+		return
+	}
+	if opts.RunJSAnalysis && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "JS analysis requires the HTTP probe tool")
+		return
+	}
+	if opts.RunCORS && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "CORS scanning requires the HTTP probe tool")
+		return
+	}
+	if opts.RunCrawl && !opts.RunHTTPX {
+		writeError(w, http.StatusBadRequest, "crawling requires the HTTP probe tool")
+		return
+	}
+
+	scanID, err := s.st.CreateScan(asset.ProgramID, opts, "manual")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	go s.engine.Run(context.Background(), asset.ProgramID, scanID, opts)
 
 	writeJSON(w, http.StatusAccepted, map[string]int64{"scan_id": scanID})
 }

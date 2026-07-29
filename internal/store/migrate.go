@@ -80,6 +80,14 @@ func (s *Store) migrate() error {
 		{"app_settings", "hackerone_api_token TEXT NOT NULL DEFAULT ''"},
 		{"scans", "cors_wordlist_path TEXT NOT NULL DEFAULT ''"},
 		{"programs", "schedule_cors_wordlist_path TEXT NOT NULL DEFAULT ''"},
+		{"scans", "run_dns INTEGER NOT NULL DEFAULT 0"},
+		{"programs", "schedule_run_dns INTEGER NOT NULL DEFAULT 0"},
+		{"scans", "run_uncover INTEGER NOT NULL DEFAULT 0"},
+		{"programs", "schedule_run_uncover INTEGER NOT NULL DEFAULT 0"},
+		{"app_settings", "uncover_api_keys TEXT NOT NULL DEFAULT ''"},
+		{"scans", "asset_id INTEGER NOT NULL DEFAULT 0"},
+		{"scans", "run_crawl INTEGER NOT NULL DEFAULT 0"},
+		{"programs", "schedule_run_crawl INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, m := range migrations {
 		if err := s.addColumnIfMissing(m.table, m.ddl); err != nil {

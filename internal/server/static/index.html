@@ -52,6 +52,9 @@
         <label class="sidebar-label">GitHub dorking token</label>
         <input id="gh-token" type="password" placeholder="Personal access token (no special scopes needed)" autocomplete="off">
         <hr>
+        <label class="sidebar-label">Uncover API keys (Shodan/Censys/FOFA/...)</label>
+        <textarea id="uncover-keys" rows="3" placeholder="One per line: shodan:xxx&#10;censys:id:secret&#10;fofa:email:key" autocomplete="off"></textarea>
+        <hr>
         <label class="sidebar-label">HackerOne scope import</label>
         <input id="h1-username" placeholder="Username" autocomplete="off">
         <input id="h1-api-token" type="password" placeholder="API token" autocomplete="off">
@@ -131,12 +134,15 @@
               <label class="chip"><input type="checkbox" id="opt-params"><span>Hidden params</span></label>
               <input id="opt-params-wordlist" class="fuzz-wordlist-input" placeholder="Wordlist path (optional)" disabled>
               <label class="chip"><input type="checkbox" id="opt-jsanalysis"><span>JS analysis</span></label>
+              <label class="chip"><input type="checkbox" id="opt-crawl"><span>Crawl</span></label>
               <label class="chip"><input type="checkbox" id="opt-cors"><span>CORS</span></label>
               <input id="opt-cors-wordlist" class="fuzz-wordlist-input" placeholder="Extra paths wordlist (optional)" disabled>
               <label class="chip"><input type="checkbox" id="opt-github"><span>GitHub dork</span></label>
               <label class="chip"><input type="checkbox" id="opt-cloud"><span>Cloud storage</span></label>
               <label class="chip"><input type="checkbox" id="opt-takeover"><span>Takeover</span></label>
               <label class="chip"><input type="checkbox" id="opt-tls"><span>TLS</span></label>
+              <label class="chip"><input type="checkbox" id="opt-dns"><span>DNS/Infra</span></label>
+              <label class="chip"><input type="checkbox" id="opt-uncover"><span>Uncover</span></label>
             </div>
             <div class="action-buttons">
               <button id="scan-btn">
@@ -162,10 +168,12 @@
         <button type="button" class="tab-btn active" data-tab="overview">Overview</button>
         <button type="button" class="tab-btn" data-tab="scope">Scope</button>
         <button type="button" class="tab-btn" data-tab="assets">Assets</button>
+        <button type="button" class="tab-btn" data-tab="gallery">Screenshots</button>
         <button type="button" class="tab-btn" data-tab="scans">Scan history</button>
         <button type="button" class="tab-btn" data-tab="vulns">Vulnerabilities</button>
         <button type="button" class="tab-btn" data-tab="fuzz">Fuzzing</button>
         <button type="button" class="tab-btn" data-tab="wayback">Archived URLs</button>
+        <button type="button" class="tab-btn" data-tab="crawled">Crawled URLs</button>
         <button type="button" class="tab-btn" data-tab="params">Hidden Params</button>
         <button type="button" class="tab-btn" data-tab="jsfindings">JS Findings</button>
         <button type="button" class="tab-btn" data-tab="cors">CORS Findings</button>
@@ -173,6 +181,7 @@
         <button type="button" class="tab-btn" data-tab="cloud">Cloud Storage</button>
         <button type="button" class="tab-btn" data-tab="takeover">Takeover</button>
         <button type="button" class="tab-btn" data-tab="tls">TLS Findings</button>
+        <button type="button" class="tab-btn" data-tab="dns">DNS Findings</button>
         <button type="button" class="tab-btn" data-tab="bounties">Bounties</button>
         <button type="button" class="tab-btn" data-tab="schedule">Schedule</button>
       </nav>
@@ -301,12 +310,29 @@
                 <th data-sort="first_seen">First seen</th>
                 <th>Screenshot</th>
                 <th>Notes</th>
+                <th></th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
         <div id="asset-pagination" class="table-pagination hidden"></div>
+      </section>
+
+      <section class="panel tab-section hidden" data-tab="gallery">
+        <div class="panel-header">
+          <h3>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Screenshots
+          </h3>
+        </div>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="gallery-search" type="search" placeholder="Search subdomain, title...">
+          </div>
+        </div>
+        <div id="gallery-grid" class="gallery-grid" data-empty="No screenshots yet — enable Screenshot on a scan."></div>
       </section>
 
       <section class="panel tab-section hidden" data-tab="scans">
@@ -390,6 +416,31 @@
             <thead>
               <tr>
                 <th>URL</th><th>Host</th><th>First seen</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel tab-section hidden" data-tab="crawled">
+        <div class="panel-header">
+          <h3>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/><path d="M20 6h-8a4 4 0 0 0-4 4v2"/></svg>
+            Crawled URLs
+          </h3>
+        </div>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="crawled-search" type="search" placeholder="Search url, host...">
+          </div>
+        </div>
+        <div class="table-wrap" data-empty="No crawled URLs yet — enable Crawl on a scan.">
+          <table id="crawled-table" class="table">
+            <thead>
+              <tr>
+                <th>URL</th><th>Host</th><th>Found</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -572,6 +623,31 @@
         </div>
       </section>
 
+      <section class="panel tab-section hidden" data-tab="dns">
+        <div class="panel-header">
+          <h3>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>
+            DNS Findings
+          </h3>
+        </div>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="dns-search" type="search" placeholder="Search host, detail, value...">
+          </div>
+        </div>
+        <div class="table-wrap" data-empty="No DNS findings yet — enable DNS/Infra on a scan.">
+          <table id="dns-table" class="table">
+            <thead>
+              <tr>
+                <th>Kind</th><th>Host</th><th>Detail</th><th>Value</th><th>Found</th><th>Triage</th><th>Notes</th><th>Report</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel tab-section hidden" data-tab="bounties">
         <div class="panel-header">
           <h3>
@@ -647,12 +723,15 @@
           <label class="chip"><input type="checkbox" id="sched-params"><span>Hidden params</span></label>
           <input id="sched-params-wordlist" class="fuzz-wordlist-input" placeholder="Wordlist path (optional)" disabled>
           <label class="chip"><input type="checkbox" id="sched-jsanalysis"><span>JS analysis</span></label>
+          <label class="chip"><input type="checkbox" id="sched-crawl"><span>Crawl</span></label>
           <label class="chip"><input type="checkbox" id="sched-cors"><span>CORS</span></label>
           <input id="sched-cors-wordlist" class="fuzz-wordlist-input" placeholder="Extra paths wordlist (optional)" disabled>
           <label class="chip"><input type="checkbox" id="sched-github"><span>GitHub dork</span></label>
           <label class="chip"><input type="checkbox" id="sched-cloud"><span>Cloud storage</span></label>
           <label class="chip"><input type="checkbox" id="sched-takeover"><span>Takeover</span></label>
           <label class="chip"><input type="checkbox" id="sched-tls"><span>TLS</span></label>
+          <label class="chip"><input type="checkbox" id="sched-dns"><span>DNS/Infra</span></label>
+          <label class="chip"><input type="checkbox" id="sched-uncover"><span>Uncover</span></label>
           <button type="submit">Save schedule</button>
         </form>
         <p id="schedule-status" class="muted"></p>

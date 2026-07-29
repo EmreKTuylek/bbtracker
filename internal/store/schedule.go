@@ -42,7 +42,7 @@ func nextOccurrence(timeOfDay string, from time.Time) (time.Time, error) {
 func (s *Store) UpdateSchedule(programID int64, enabled bool, intervalDays int, timeOfDay string,
 	runSubfinder, runHTTPX, screenshot, runNuclei, runFuzz bool, fuzzWordlistPath string,
 	runWayback, runParams bool, paramsWordlistPath string, runJSAnalysis bool, runCORS bool, corsWordlistPath string,
-	runGithubDork bool, runCloudEnum, runTakeover, runTLS bool) (*Program, error) {
+	runGithubDork bool, runCloudEnum, runTakeover, runTLS, runDNS, runUncover, runCrawl bool) (*Program, error) {
 	existing, err := s.GetProgram(programID)
 	if err != nil {
 		return nil, err
@@ -69,13 +69,13 @@ func (s *Store) UpdateSchedule(programID int64, enabled bool, intervalDays int, 
 		schedule_run_wayback=?, schedule_run_params=?, schedule_params_wordlist_path=?,
 		schedule_run_jsanalysis=?, schedule_run_cors=?, schedule_cors_wordlist_path=?,
 		schedule_run_github_dork=?, schedule_run_cloud_enum=?,
-		schedule_run_takeover=?, schedule_run_tls=?,
+		schedule_run_takeover=?, schedule_run_tls=?, schedule_run_dns=?, schedule_run_uncover=?, schedule_run_crawl=?,
 		schedule_next_run_at=? WHERE id=?`,
 		boolToInt(enabled), intervalDays, timeOfDay, boolToInt(runSubfinder), boolToInt(runHTTPX),
 		boolToInt(screenshot), boolToInt(runNuclei), boolToInt(runFuzz), fuzzWordlistPath,
 		boolToInt(runWayback), boolToInt(runParams), paramsWordlistPath, boolToInt(runJSAnalysis),
 		boolToInt(runCORS), corsWordlistPath, boolToInt(runGithubDork), boolToInt(runCloudEnum),
-		boolToInt(runTakeover), boolToInt(runTLS), nextRunAt, programID)
+		boolToInt(runTakeover), boolToInt(runTLS), boolToInt(runDNS), boolToInt(runUncover), boolToInt(runCrawl), nextRunAt, programID)
 	if err != nil {
 		return nil, err
 	}

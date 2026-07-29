@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS programs (
     schedule_run_cloud_enum     INTEGER NOT NULL DEFAULT 0,
     schedule_run_takeover       INTEGER NOT NULL DEFAULT 0,
     schedule_run_tls            INTEGER NOT NULL DEFAULT 0,
+    schedule_run_dns            INTEGER NOT NULL DEFAULT 0,
+    schedule_run_uncover        INTEGER NOT NULL DEFAULT 0,
+    schedule_run_crawl          INTEGER NOT NULL DEFAULT 0,
     schedule_next_run_at    TEXT,
     schedule_last_run_at    TEXT
 );
@@ -64,6 +67,15 @@ CREATE TABLE IF NOT EXISTS scans (
     run_cloud_enum      INTEGER NOT NULL DEFAULT 0,
     run_takeover        INTEGER NOT NULL DEFAULT 0,
     run_tls             INTEGER NOT NULL DEFAULT 0,
+    run_dns             INTEGER NOT NULL DEFAULT 0,
+    run_uncover         INTEGER NOT NULL DEFAULT 0,
+    run_crawl           INTEGER NOT NULL DEFAULT 0,
+    -- 0 = whole-program scan (the default); a nonzero value scopes the scan
+    -- to a single asset (see the "Rescan" button on the Assets tab). Deliberately
+    -- NOT a REFERENCES assets(id) foreign key: with foreign_keys=ON, 0 would
+    -- violate that constraint since no asset has id 0 (AUTOINCREMENT starts at 1) -
+    -- this is a sentinel value, not a real reference, so it stays a plain INTEGER.
+    asset_id            INTEGER NOT NULL DEFAULT 0,
     triggered_by     TEXT NOT NULL DEFAULT 'manual' -- 'manual' | 'scheduled'
 );
 CREATE INDEX IF NOT EXISTS idx_scans_program ON scans(program_id);
@@ -325,6 +337,46 @@ CREATE TABLE IF NOT EXISTS tls_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_tls_findings_asset ON tls_findings(asset_id);
 
+-- One row per (asset, kind, detail, value) DNS/infrastructure signal - a raw
+-- record (kind='record', detail is the record type: A|AAAA|CNAME|MX|TXT|NS),
+-- a successful zone transfer (kind='zone_transfer', a critical finding on its
+-- own), or WAF/CDN/cloud-provider/ASN attribution derived from the host's
+-- resolved IP (kind='waf'|'cdn'|'cloud'|'asn'). detail is part of the
+-- uniqueness key (like tls_findings) since a host can legitimately have
+-- several distinct record values of the same kind (e.g. multiple NS/TXT
+-- entries). Same upsert/never-deleted pattern as vulnerabilities.
+CREATE TABLE IF NOT EXISTS dns_findings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id   INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    scan_id    INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    host       TEXT NOT NULL DEFAULT '',
+    kind       TEXT NOT NULL DEFAULT '', -- 'record' | 'zone_transfer' | 'waf' | 'cdn' | 'cloud' | 'asn'
+    detail     TEXT NOT NULL DEFAULT '', -- record type, for kind='record' only
+    value      TEXT NOT NULL DEFAULT '',
+    found_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    status         TEXT NOT NULL DEFAULT 'open',
+    triage_notes   TEXT NOT NULL DEFAULT '',
+    UNIQUE(asset_id, kind, detail, value)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_findings_asset ON dns_findings(asset_id);
+
+-- One row per (asset, url) katana discovered while crawling a probed asset's
+-- root URL - linked pages, forms, JS-referenced endpoints. Unlike
+-- archived_urls (keyed by program_id, no asset relationship guaranteed),
+-- every crawled URL originates from a specific known asset, so this is
+-- keyed by asset_id. Same upsert/never-deleted pattern as archived_urls; no
+-- status/triage_notes - a crawled URL is a wider recon surface for other
+-- tools to consume, not a finding of its own.
+CREATE TABLE IF NOT EXISTS crawled_urls (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id   INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    scan_id    INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    url        TEXT NOT NULL,
+    found_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(asset_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_crawled_urls_asset ON crawled_urls(asset_id);
+
 -- Single-row app-wide configuration (id is always 1). Currently just the
 -- Telegram notification settings; see internal/telegram.
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -338,5 +390,6 @@ CREATE TABLE IF NOT EXISTS app_settings (
     github_token                     TEXT NOT NULL DEFAULT '',
     scan_retention_count             INTEGER NOT NULL DEFAULT 0, -- 0 = unlimited; see Store.PruneOldScans
     hackerone_username               TEXT NOT NULL DEFAULT '',
-    hackerone_api_token              TEXT NOT NULL DEFAULT ''
+    hackerone_api_token              TEXT NOT NULL DEFAULT '',
+    uncover_api_keys                 TEXT NOT NULL DEFAULT '' -- one "agent:value" pair per line; see recon.parseUncoverKeys
 );

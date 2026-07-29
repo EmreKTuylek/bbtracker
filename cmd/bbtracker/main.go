@@ -34,7 +34,8 @@ func main() {
 
 	engine := recon.NewEngine(st, recon.NewLibSubfinder(), recon.NewLibHTTPProbe(), recon.NewLibNuclei(), recon.NewSimpleFuzzer(),
 		recon.NewLibWayback(), recon.NewSimpleParamFuzzer(), recon.NewSimpleJSAnalyzer(), recon.NewSimpleCORSScanner(),
-		recon.NewLibGitHubDorker(), recon.NewSimpleCloudEnumerator(), recon.NewSimpleTakeoverScanner(), recon.NewSimpleTLSScanner())
+		recon.NewLibGitHubDorker(), recon.NewSimpleCloudEnumerator(), recon.NewSimpleTakeoverScanner(), recon.NewSimpleTLSScanner(),
+		recon.NewSimpleDNSInfraScanner(), recon.NewLibUncover(), recon.NewLibKatana())
 	srv := server.NewServer(st, engine)
 	httpServer := &http.Server{Addr: *addr, Handler: srv.Handler()}
 

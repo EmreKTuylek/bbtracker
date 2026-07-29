@@ -96,6 +96,29 @@ const (
 	tlsBaseTimeout   = 1 * time.Minute
 	tlsPerHostBudget = 5 * time.Second
 	tlsMaxTimeout    = 10 * time.Minute
+	// dnsPhaseTimeout follows the same host-scaled shape as takeover/TLS, but
+	// with a larger per-host budget: each host does up to six DNS record
+	// queries, an AXFR zone-transfer attempt, plus a WAF/CDN/cloud/ASN lookup
+	// against its resolved IP - more round trips than takeover/TLS's single
+	// dial, but still no wordlist.
+	dnsBaseTimeout   = 1 * time.Minute
+	dnsPerHostBudget = 10 * time.Second
+	dnsMaxTimeout    = 15 * time.Minute
+	// uncoverPhaseTimeout scales with domain count, the same shape as
+	// githubDorkPhaseTimeout: each domain runs one query per configured
+	// search-engine agent, and uncover's own per-agent rate limiting (not
+	// this codebase's concern - see uncover.go) can make a single query take
+	// a while.
+	uncoverBaseTimeout     = 1 * time.Minute
+	uncoverPerDomainBudget = 30 * time.Second
+	uncoverMaxTimeout      = 10 * time.Minute
+	// crawlPhaseTimeout follows the same host-scaled shape as httpx/CORS, but
+	// with a larger per-host budget - a crawl (MaxDepth 3, up to
+	// maxCrawledURLs total) does far more requests per host than a single
+	// probe or a fixed CORS probe set.
+	crawlBaseTimeout   = 2 * time.Minute
+	crawlPerHostBudget = 20 * time.Second
+	crawlMaxTimeout    = 20 * time.Minute
 )
 
 // httpxTimeoutFor scales the probe deadline with the number of hosts
@@ -320,6 +343,38 @@ type TLSScanner interface {
 	Scan(ctx context.Context, hosts []string) ([]TLSFinding, error)
 }
 
+// DNSFinding is one DNS/infrastructure signal found for a host: a raw record
+// (kind="record", Detail is the record type - "A"|"AAAA"|"CNAME"|"MX"|"TXT"|
+// "NS", Value the record's data), a successful zone transfer
+// (kind="zone_transfer" - a critical, independently reportable finding on its
+// own), or a WAF/CDN/cloud-provider/ASN attribution derived from the host's
+// first A record (kind="waf"|"cdn"|"cloud"|"asn").
+type DNSFinding struct {
+	Host   string
+	Kind   string // "record" | "zone_transfer" | "waf" | "cdn" | "cloud" | "asn"
+	Detail string // record type, for kind="record" only
+	Value  string
+}
+
+// DNSScanner inspects each host's DNS records, attempts a zone-transfer
+// (AXFR), and derives WAF/CDN/cloud/ASN attribution from its resolved IP.
+// Depends only on DNS + the resolved IP - no httpx URLs needed, same
+// host-only shape as TakeoverScanner/TLSScanner.
+type DNSScanner interface {
+	Scan(ctx context.Context, hosts []string) ([]DNSFinding, error)
+}
+
+// PassiveDiscoverer finds hosts for a set of in-scope domains via passive
+// internet-wide search engines (Shodan, Censys, FOFA, ...) - a discovery
+// source like Subfinder, not a per-host prober, so it returns the same
+// SubResult shape and is merged into assetIDByHost the same way. apiKeys is
+// the raw app_settings.uncover_api_keys value (one "provider:key" per line);
+// parsing/validating it is the implementation's job, since which providers
+// are configured can change between scans.
+type PassiveDiscoverer interface {
+	Discover(ctx context.Context, apiKeys string, domains []string) ([]SubResult, error)
+}
+
 // Engine runs a full recon pass and writes results to the store.
 type Engine struct {
 	st         *store.Store
@@ -335,6 +390,9 @@ type Engine struct {
 	cloud      CloudEnumerator
 	takeover   TakeoverScanner
 	tlsScan    TLSScanner
+	dnsScan    DNSScanner
+	uncover    PassiveDiscoverer
+	crawler    Crawler
 
 	mu      sync.Mutex
 	cancels map[int64]context.CancelFunc
@@ -346,11 +404,12 @@ type Engine struct {
 // NewEngine wires the recon engine.
 func NewEngine(st *store.Store, subs Subfinder, http HTTPProbe, vuln VulnScanner, fuzz Fuzzer,
 	archive URLArchive, params ParamFuzzer, jsAnalyzer JSAnalyzer, cors CORSScanner, github GitHubDorker,
-	cloud CloudEnumerator, takeover TakeoverScanner, tlsScan TLSScanner) *Engine {
+	cloud CloudEnumerator, takeover TakeoverScanner, tlsScan TLSScanner, dnsScan DNSScanner, uncover PassiveDiscoverer,
+	crawler Crawler) *Engine {
 	return &Engine{
 		st: st, subs: subs, http: http, vuln: vuln, fuzz: fuzz,
 		archive: archive, params: params, jsAnalyzer: jsAnalyzer, cors: cors, github: github, cloud: cloud,
-		takeover: takeover, tlsScan: tlsScan,
+		takeover: takeover, tlsScan: tlsScan, dnsScan: dnsScan, uncover: uncover, crawler: crawler,
 		cancels:      map[int64]context.CancelFunc{},
 		activePhases: map[int64]map[string]bool{},
 	}
@@ -445,37 +504,24 @@ func (e *Engine) Run(ctx context.Context, programID, scanID int64, opts store.Sc
 	newHosts := []string{}
 	newCount := 0
 
-	if opts.RunSubfinder {
-		domains, err := e.st.InScopeDomains(programID)
-		if err != nil {
-			e.finishFailed(scanID, 0, "read scope", err)
-			return
-		}
-		if len(domains) == 0 {
-			e.st.FinishScan(scanID, "error", 0, "no in-scope domains")
-			return
-		}
-		outDomains, err := e.st.OutScopeDomains(programID)
-		if err != nil {
-			e.finishFailed(scanID, 0, "read scope", err)
-			return
-		}
-
-		subs, err := e.enumerateWithDeadline(ctx, domains)
-		if err != nil {
-			e.finishFailed(scanID, 0, "subfinder", err)
-			return
-		}
-
-		for _, sres := range subs {
+	// upsertDiscovered merges freshly-discovered hosts into assetIDByHost,
+	// upserting each into the store and recording new ones - shared by both
+	// discovery sources below (subfinder and uncover) so the out-of-scope
+	// filter and upsert/new-asset bookkeeping isn't duplicated. Hosts already
+	// present (e.g. subfinder already found the same host uncover later
+	// reports) are left alone rather than re-upserted.
+	upsertDiscovered := func(results []SubResult, outDomains []string) error {
+		for _, sres := range results {
 			host := strings.ToLower(strings.TrimSpace(sres.Host))
 			if host == "" || hostInScopeSuffix(host, outDomains) {
 				continue
 			}
+			if _, ok := assetIDByHost[host]; ok {
+				continue
+			}
 			id, isNew, err := e.st.UpsertAsset(programID, host, sres.Source)
 			if err != nil {
-				e.finishFailed(scanID, newCount, "save asset", err)
-				return
+				return err
 			}
 			assetIDByHost[host] = id
 			if isNew {
@@ -484,21 +530,97 @@ func (e *Engine) Run(ctx context.Context, programID, scanID int64, opts store.Sc
 				_ = e.st.SaveScanEvent(scanID, id, "new_asset", "", sres.Source)
 			}
 		}
-	} else if opts.RunHTTPX || opts.RunTakeover || opts.RunTLS {
-		// Probing known assets without re-running subfinder. Domain-only
-		// tools (wayback/github/cloud) need no assets at all, so this branch
-		// only applies to tools that work over hosts: httpx (URLs) and
-		// takeover/TLS (host-only - see runTakeoverPhase/runTLSPhase).
-		hostIDs, err := e.st.AssetHosts(programID)
+		return nil
+	}
+
+	if opts.AssetID != 0 {
+		// Single-asset rescan (the Assets tab's "Rescan" button) - loads just
+		// that one asset instead of the whole program's domains/assets.
+		// handleStartAssetScan already zeroes out the domain-scoped tool
+		// flags (subfinder/uncover/wayback/github-dork/cloud-enum) before
+		// building opts, so this is the only asset-loading path taken.
+		asset, err := e.st.GetAsset(opts.AssetID)
 		if err != nil {
-			e.finishFailed(scanID, 0, "read assets", err)
+			e.finishFailed(scanID, 0, "read asset", err)
 			return
 		}
-		if len(hostIDs) == 0 {
-			e.st.FinishScan(scanID, "error", 0, "no known assets to probe; run subfinder first")
+		if asset == nil || asset.ProgramID != programID {
+			e.st.FinishScan(scanID, "error", 0, "asset not found")
 			return
 		}
-		assetIDByHost = hostIDs
+		assetIDByHost[strings.ToLower(strings.TrimSpace(asset.Subdomain))] = asset.ID
+	} else {
+		if opts.RunSubfinder || opts.RunUncover {
+			domains, err := e.st.InScopeDomains(programID)
+			if err != nil {
+				e.finishFailed(scanID, 0, "read scope", err)
+				return
+			}
+			if len(domains) == 0 {
+				e.st.FinishScan(scanID, "error", 0, "no in-scope domains")
+				return
+			}
+			outDomains, err := e.st.OutScopeDomains(programID)
+			if err != nil {
+				e.finishFailed(scanID, 0, "read scope", err)
+				return
+			}
+
+			if opts.RunSubfinder {
+				subs, err := e.enumerateWithDeadline(ctx, domains)
+				if err != nil {
+					e.finishFailed(scanID, 0, "subfinder", err)
+					return
+				}
+				if err := upsertDiscovered(subs, outDomains); err != nil {
+					e.finishFailed(scanID, newCount, "save asset", err)
+					return
+				}
+			}
+
+			if opts.RunUncover {
+				settings, err := e.st.GetSettings()
+				if err != nil {
+					e.finishFailed(scanID, newCount, "read settings", err)
+					return
+				}
+				results, err := e.uncoverWithDeadline(ctx, settings.UncoverAPIKeys, domains)
+				if err != nil {
+					e.finishFailed(scanID, newCount, "uncover", err)
+					return
+				}
+				if err := upsertDiscovered(results, outDomains); err != nil {
+					e.finishFailed(scanID, newCount, "save asset", err)
+					return
+				}
+			}
+		}
+
+		// Probing known assets without re-running subfinder. Domain-only tools
+		// (wayback/github/cloud) need no assets at all, so this only applies to
+		// tools that work over hosts: httpx (URLs) and takeover/TLS/DNS
+		// (host-only - see runTakeoverPhase/runTLSPhase/runDNSPhase). Skipped
+		// when subfinder ran, since subfinder's own upsert loop above is already
+		// comprehensive (it refreshes every known host, not just new ones). Any
+		// hosts uncover just discovered above are already committed to the store
+		// by this point, so AssetHosts naturally includes them too - merged
+		// without clobbering assetIDByHost's existing entries.
+		if !opts.RunSubfinder && (opts.RunHTTPX || opts.RunTakeover || opts.RunTLS || opts.RunDNS) {
+			hostIDs, err := e.st.AssetHosts(programID)
+			if err != nil {
+				e.finishFailed(scanID, newCount, "read assets", err)
+				return
+			}
+			if len(hostIDs) == 0 {
+				e.st.FinishScan(scanID, "error", 0, "no known assets to probe; run subfinder or uncover first")
+				return
+			}
+			for h, id := range hostIDs {
+				if _, ok := assetIDByHost[h]; !ok {
+					assetIDByHost[h] = id
+				}
+			}
+		}
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -571,6 +693,15 @@ func (e *Engine) Run(ctx context.Context, programID, scanID int64, opts store.Sc
 			defer wg.Done()
 			if err := e.runTLSPhase(ctx, scanID, assetIDByHost); err != nil {
 				recordErr("tls", err)
+			}
+		}()
+	}
+	if opts.RunDNS {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := e.runDNSPhase(ctx, scanID, assetIDByHost); err != nil {
+				recordErr("dns", err)
 			}
 		}()
 	}
@@ -687,6 +818,43 @@ func (e *Engine) runAssetChain(ctx context.Context, scanID int64, opts store.Sca
 		}
 	}
 
+	// rootURLs is httpx's own probed URLs, captured before the crawl phase
+	// (below) expands assetIDByURL with katana's discoveries. Fuzz uses this
+	// instead of assetIDByURL - trying every wordlist entry against every
+	// crawled URL as well would multiply request volume (URL x wordlist),
+	// unlike nuclei/cors/params, whose per-URL cost doesn't scale with a
+	// wordlist the same way.
+	rootURLs := make([]string, 0, len(assetIDByURL))
+	for u := range assetIDByURL {
+		rootURLs = append(rootURLs, u)
+	}
+
+	if opts.RunCrawl && len(assetIDByURL) > 0 {
+		e.startPhase(scanID, "crawl")
+		results, err := e.crawlWithDeadline(ctx, rootURLs)
+		e.endPhase(scanID, "crawl")
+		if err != nil {
+			return hostIPs, changedAssets, newVulns, "crawl", err
+		}
+		for _, cr := range results {
+			assetID, ok := assetIDByURL[cr.Host]
+			if !ok || cr.URL == "" {
+				continue
+			}
+			if _, ok := assetIDByURL[cr.URL]; ok {
+				continue // already known (e.g. the root URL itself)
+			}
+			assetIDByURL[cr.URL] = assetID
+			isNew, err := e.st.SaveCrawledURL(store.CrawledURL{AssetID: assetID, ScanID: scanID, URL: cr.URL})
+			if err != nil {
+				continue
+			}
+			if isNew {
+				_ = e.st.SaveScanEvent(scanID, assetID, "new_crawled_url", "", cr.URL)
+			}
+		}
+	}
+
 	if opts.RunNuclei && len(assetIDByURL) > 0 {
 		e.startPhase(scanID, "nuclei")
 		urls := make([]string, 0, len(assetIDByURL))
@@ -751,13 +919,9 @@ func (e *Engine) runAssetChain(ctx context.Context, scanID int64, opts store.Sca
 		}
 	}
 
-	if opts.RunFuzz && len(assetIDByURL) > 0 {
+	if opts.RunFuzz && len(rootURLs) > 0 {
 		e.startPhase(scanID, "fuzz")
-		urls := make([]string, 0, len(assetIDByURL))
-		for u := range assetIDByURL {
-			urls = append(urls, u)
-		}
-		results, err := e.fuzzWithDeadline(ctx, urls, opts.FuzzWordlistPath)
+		results, err := e.fuzzWithDeadline(ctx, rootURLs, opts.FuzzWordlistPath)
 		e.endPhase(scanID, "fuzz")
 		if err != nil {
 			return hostIPs, changedAssets, newVulns, "fuzz", err
@@ -994,6 +1158,43 @@ func (e *Engine) runTLSPhase(ctx context.Context, scanID int64, assetIDByHost ma
 		if isNew {
 			_ = e.st.SaveScanEvent(scanID, assetID, "new_tls_finding", "",
 				fmt.Sprintf("%s: %s", f.Issue, f.Detail))
+		}
+	}
+	return nil
+}
+
+// runDNSPhase inspects known hosts' DNS records/zone-transfer exposure/
+// WAF-CDN-cloud-ASN attribution. Host-only (needs assetIDByHost, not httpx's
+// live URLs) - runs in the same concurrent group as the domain-only phases;
+// see Run.
+func (e *Engine) runDNSPhase(ctx context.Context, scanID int64, assetIDByHost map[string]int64) error {
+	e.startPhase(scanID, "dns")
+	defer e.endPhase(scanID, "dns")
+	if len(assetIDByHost) == 0 {
+		return nil
+	}
+	hosts := make([]string, 0, len(assetIDByHost))
+	for h := range assetIDByHost {
+		hosts = append(hosts, h)
+	}
+	results, err := e.dnsWithDeadline(ctx, hosts)
+	if err != nil {
+		return err
+	}
+	for _, f := range results {
+		assetID, ok := assetIDByHost[f.Host]
+		if !ok {
+			continue
+		}
+		isNew, err := e.st.SaveDNSFinding(store.DNSFinding{
+			AssetID: assetID, ScanID: scanID, Host: f.Host, Kind: f.Kind, Detail: f.Detail, Value: f.Value,
+		})
+		if err != nil {
+			continue
+		}
+		if isNew {
+			_ = e.st.SaveScanEvent(scanID, assetID, "new_dns_finding", "",
+				fmt.Sprintf("%s: %s", f.Kind, f.Value))
 		}
 	}
 	return nil
@@ -1407,5 +1608,117 @@ func (e *Engine) tlsWithDeadline(ctx context.Context, hosts []string) ([]TLSFind
 			return nil, ctx.Err()
 		}
 		return nil, fmt.Errorf("timed out after %s waiting for TLS scan of %d hosts", timeout, len(hosts))
+	}
+}
+
+// dnsTimeoutFor is the DNS-scan equivalent of corsTimeoutFor.
+func dnsTimeoutFor(hostCount int) time.Duration {
+	d := dnsBaseTimeout + time.Duration(hostCount)*dnsPerHostBudget
+	if d > dnsMaxTimeout {
+		return dnsMaxTimeout
+	}
+	return d
+}
+
+// dnsWithDeadline races DNSScanner.Scan against a host-scaled timeout, the
+// same deadline-race pattern as corsWithDeadline/takeoverWithDeadline.
+func (e *Engine) dnsWithDeadline(ctx context.Context, hosts []string) ([]DNSFinding, error) {
+	timeout := dnsTimeoutFor(len(hosts))
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type outcome struct {
+		results []DNSFinding
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		results, err := e.dnsScan.Scan(ctx, hosts)
+		done <- outcome{results, err}
+	}()
+
+	select {
+	case o := <-done:
+		return o.results, o.err
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("timed out after %s waiting for DNS scan of %d hosts", timeout, len(hosts))
+	}
+}
+
+// uncoverTimeoutFor is the uncover-discovery equivalent of githubDorkTimeoutFor.
+func uncoverTimeoutFor(domainCount int) time.Duration {
+	d := uncoverBaseTimeout + time.Duration(domainCount)*uncoverPerDomainBudget
+	if d > uncoverMaxTimeout {
+		return uncoverMaxTimeout
+	}
+	return d
+}
+
+// uncoverWithDeadline races PassiveDiscoverer.Discover against a
+// domain-scaled timeout, the same deadline-race pattern as
+// githubDorkWithDeadline.
+func (e *Engine) uncoverWithDeadline(ctx context.Context, apiKeys string, domains []string) ([]SubResult, error) {
+	timeout := uncoverTimeoutFor(len(domains))
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type outcome struct {
+		results []SubResult
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		results, err := e.uncover.Discover(ctx, apiKeys, domains)
+		done <- outcome{results, err}
+	}()
+
+	select {
+	case o := <-done:
+		return o.results, o.err
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("timed out after %s waiting for uncover discovery over %d domains", timeout, len(domains))
+	}
+}
+
+// crawlTimeoutFor is the crawl-phase equivalent of corsTimeoutFor.
+func crawlTimeoutFor(hostCount int) time.Duration {
+	d := crawlBaseTimeout + time.Duration(hostCount)*crawlPerHostBudget
+	if d > crawlMaxTimeout {
+		return crawlMaxTimeout
+	}
+	return d
+}
+
+// crawlWithDeadline races Crawler.Crawl against a host-scaled timeout, the
+// same deadline-race pattern as corsWithDeadline.
+func (e *Engine) crawlWithDeadline(ctx context.Context, urls []string) ([]CrawlResult, error) {
+	timeout := crawlTimeoutFor(len(urls))
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type outcome struct {
+		results []CrawlResult
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		results, err := e.crawler.Crawl(ctx, urls)
+		done <- outcome{results, err}
+	}()
+
+	select {
+	case o := <-done:
+		return o.results, o.err
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("timed out after %s waiting for crawl of %d URLs", timeout, len(urls))
 	}
 }

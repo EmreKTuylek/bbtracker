@@ -17,6 +17,7 @@ var triageTables = map[string]string{
 	"params":          "param_hits",
 	"takeover":        "takeover_findings",
 	"tls":             "tls_findings",
+	"dns":             "dns_findings",
 }
 
 // validTriageStatuses whitelists the values UpdateFindingTriage accepts for

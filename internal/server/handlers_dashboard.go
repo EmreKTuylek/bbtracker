@@ -62,6 +62,11 @@ type dashboardTLSFinding struct {
 	ProgramID   int64  `json:"program_id"`
 	ProgramName string `json:"program_name"`
 }
+type dashboardDNSFinding struct {
+	store.DNSFindingRow
+	ProgramID   int64  `json:"program_id"`
+	ProgramName string `json:"program_name"`
+}
 
 // dashboardProgramSummary is one program's row in the dashboard's program
 // list: enough to render a per-program card without a second request per
@@ -88,6 +93,7 @@ type dashboardResponse struct {
 	CloudFindings    []dashboardCloudFinding    `json:"cloud_findings"`
 	TakeoverFindings []dashboardTakeoverFinding `json:"takeover_findings"`
 	TLSFindings      []dashboardTLSFinding      `json:"tls_findings"`
+	DNSFindings      []dashboardDNSFinding      `json:"dns_findings"`
 }
 
 // handleDashboard serves the cross-program overview: per-program summaries
@@ -196,6 +202,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, t := range tls {
 			resp.TLSFindings = append(resp.TLSFindings, dashboardTLSFinding{TLSFindingRow: t, ProgramID: p.ID, ProgramName: p.Name})
+		}
+
+		dns, err := s.st.ListDNSFindings(p.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, d := range dns {
+			resp.DNSFindings = append(resp.DNSFindings, dashboardDNSFinding{DNSFindingRow: d, ProgramID: p.ID, ProgramName: p.Name})
 		}
 	}
 

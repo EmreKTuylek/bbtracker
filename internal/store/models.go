@@ -31,6 +31,9 @@ type Program struct {
 	ScheduleRunCloudEnum       bool   `json:"schedule_run_cloud_enum"`
 	ScheduleRunTakeover        bool   `json:"schedule_run_takeover"`
 	ScheduleRunTLS             bool   `json:"schedule_run_tls"`
+	ScheduleRunDNS             bool   `json:"schedule_run_dns"`
+	ScheduleRunUncover         bool   `json:"schedule_run_uncover"`
+	ScheduleRunCrawl           bool   `json:"schedule_run_crawl"`
 	ScheduleNextRunAt          string `json:"schedule_next_run_at"`
 	ScheduleLastRunAt          string `json:"schedule_last_run_at"`
 }
@@ -69,6 +72,10 @@ type Scan struct {
 	RunCloudEnum       bool   `json:"run_cloud_enum"`
 	RunTakeover        bool   `json:"run_takeover"`
 	RunTLS             bool   `json:"run_tls"`
+	RunDNS             bool   `json:"run_dns"`
+	RunUncover         bool   `json:"run_uncover"`
+	RunCrawl           bool   `json:"run_crawl"`
+	AssetID            int64  `json:"asset_id"` // 0 = whole-program scan; see schema.sql's scans.asset_id
 	TriggeredBy        string `json:"triggered_by"` // "manual" | "scheduled"
 }
 
@@ -90,6 +97,10 @@ type ScanOptions struct {
 	RunCloudEnum       bool
 	RunTakeover        bool
 	RunTLS             bool
+	RunDNS             bool
+	RunUncover         bool
+	RunCrawl           bool
+	AssetID            int64 // 0 = whole-program scan; nonzero scopes the scan to a single asset (see Engine.Run)
 }
 
 // AnyToolEnabled reports whether at least one recon tool is selected. Used to
@@ -99,7 +110,7 @@ type ScanOptions struct {
 func (o ScanOptions) AnyToolEnabled() bool {
 	return o.RunSubfinder || o.RunHTTPX || o.RunNuclei || o.RunFuzz ||
 		o.RunWayback || o.RunParams || o.RunJSAnalysis || o.RunCORS ||
-		o.RunGithubDork || o.RunCloudEnum || o.RunTakeover || o.RunTLS
+		o.RunGithubDork || o.RunCloudEnum || o.RunTakeover || o.RunTLS || o.RunDNS || o.RunUncover || o.RunCrawl
 }
 
 // Asset is a discovered subdomain for a program.
@@ -180,6 +191,7 @@ type Settings struct {
 	ScanRetentionCount            int    `json:"scan_retention_count"` // 0 = unlimited; see Store.PruneOldScans
 	HackerOneUsername             string `json:"hackerone_username"`
 	HackerOneAPIToken             string `json:"hackerone_api_token"`
+	UncoverAPIKeys                string `json:"uncover_api_keys"` // one "agent:value" pair per line; see recon.parseUncoverKeys
 }
 
 // Vulnerability is one nuclei template match for an asset, kept as a single
@@ -256,6 +268,24 @@ type ArchivedURL struct {
 	URL       string `json:"url"`
 	Host      string `json:"host"`
 	FirstSeen string `json:"first_seen"`
+}
+
+// CrawledURL is one URL katana discovered while crawling a probed asset -
+// see schema.sql's crawled_urls table. Kept as a single current row per
+// (asset_id, url), same upsert/never-deleted pattern as archived_urls.
+type CrawledURL struct {
+	ID      int64  `json:"id"`
+	AssetID int64  `json:"asset_id"`
+	ScanID  int64  `json:"scan_id"`
+	URL     string `json:"url"`
+	FoundAt string `json:"found_at"`
+}
+
+// CrawledURLRow is a CrawledURL joined with its asset's subdomain, for the
+// UI's Crawled URLs table.
+type CrawledURLRow struct {
+	CrawledURL
+	Subdomain string `json:"subdomain"`
 }
 
 // ParamHit is one candidate hidden query parameter a param-fuzz scan found
@@ -405,5 +435,28 @@ type TLSFinding struct {
 // UI's TLS Findings table.
 type TLSFindingRow struct {
 	TLSFinding
+	Subdomain string `json:"subdomain"`
+}
+
+// DNSFinding is one DNS/infrastructure signal found for an asset - a raw
+// record, a zone-transfer disclosure, or WAF/CDN/cloud/ASN attribution - see
+// schema.sql's dns_findings table.
+type DNSFinding struct {
+	ID      int64  `json:"id"`
+	AssetID int64  `json:"asset_id"`
+	ScanID  int64  `json:"scan_id"`
+	Host    string `json:"host"`
+	Kind    string `json:"kind"` // "record" | "zone_transfer" | "waf" | "cdn" | "cloud" | "asn"
+	Detail  string `json:"detail"`
+	Value   string `json:"value"`
+	FoundAt string `json:"found_at"`
+	Status      string `json:"status"`
+	TriageNotes string `json:"triage_notes"`
+}
+
+// DNSFindingRow is a DNSFinding joined with its asset's subdomain, for the
+// UI's DNS Findings table.
+type DNSFindingRow struct {
+	DNSFinding
 	Subdomain string `json:"subdomain"`
 }

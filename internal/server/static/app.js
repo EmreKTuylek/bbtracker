@@ -2471,7 +2471,14 @@ function renderWriteups() {
     tr.appendChild(td(w.bounty ? "$" + w.bounty : ""));
     tr.appendChild(td((w.disclosed_at || "").slice(0, 10)));
     tr.appendChild(td(w.quality_flag === "ok" ? "detailed" : "low"));
-    tr.appendChild(td(w.analysis_status === "done" ? w.vuln_class : w.analysis_status));
+    if (w.analysis_status === "done") {
+      tr.appendChild(td(w.vuln_class));
+    } else {
+      // failed/skipped (and queued-after-429): show why, full text in the tooltip
+      const err = w.analysis_error || "";
+      const short = err.length > 90 ? err.slice(0, 90) + "…" : err;
+      tr.appendChild(td(w.analysis_status && err ? `${w.analysis_status}: ${short}` : w.analysis_status, { title: err }));
+    }
     const actionCell = document.createElement("td");
     actionCell.appendChild(analysisAction(w));
     tr.appendChild(actionCell);
@@ -2479,8 +2486,6 @@ function renderWriteups() {
   }
 }
 
-// ponytail: skipped/failed jobs don't show their error text in the list; the
-// job's `error` is available from GET /api/writeups/{id}/analysis.
 function analysisAction(w) {
   const b = mk("button", "Analyze", "btn-secondary");
   b.type = "button";

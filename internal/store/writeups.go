@@ -44,7 +44,8 @@ func (s *Store) ListWriteups(quality string, limit int) ([]Writeup, error) {
 			w.disclosed_at, w.quality_flag, w.created_at,
 			COALESCE(a.vuln_class, ''), COALESCE(a.tech_tags, '[]'),
 			CASE WHEN a.id IS NOT NULL THEN 'done'
-			     ELSE COALESCE((SELECT stage FROM analysis_jobs j WHERE j.writeup_id = w.id ORDER BY j.id DESC LIMIT 1), '') END
+			     ELSE COALESCE((SELECT stage FROM analysis_jobs j WHERE j.writeup_id = w.id ORDER BY j.id DESC LIMIT 1), '') END,
+			COALESCE((SELECT error FROM analysis_jobs j WHERE j.writeup_id = w.id ORDER BY j.id DESC LIMIT 1), '')
 		FROM writeups w LEFT JOIN analyses a ON a.writeup_id = w.id AND a.lang = 'tr'`
 	args := []any{}
 	if quality == "ok" || quality == "low" {
@@ -64,7 +65,7 @@ func (s *Store) ListWriteups(quality string, limit int) ([]Writeup, error) {
 		var tags string
 		if err := rows.Scan(&w.ID, &w.Source, &w.ExternalID, &w.URL, &w.Title, &w.Program, &w.Weakness,
 			&w.Severity, &w.Bounty, &w.DisclosedAt, &w.QualityFlag, &w.CreatedAt,
-			&w.VulnClass, &tags, &w.AnalysisStatus); err != nil {
+			&w.VulnClass, &tags, &w.AnalysisStatus, &w.AnalysisError); err != nil {
 			return nil, err
 		}
 		if json.Unmarshal([]byte(tags), &w.TechTags) != nil || w.TechTags == nil {

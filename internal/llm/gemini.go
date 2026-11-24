@@ -93,17 +93,21 @@ func GenerateJSON(ctx context.Context, apiKey, model, system, user string) (stri
 					Text string `json:"text"`
 				} `json:"parts"`
 			} `json:"content"`
-			FinishReason string `json:"finishReason"`
+			FinishReason  string `json:"finishReason"`
+			FinishMessage string `json:"finishMessage"`
 		} `json:"candidates"`
 		PromptFeedback struct {
 			BlockReason string `json:"blockReason"`
+			// ponytail: blockReasonMessage isn't in Google's docs as read; harmless if absent.
+			BlockReasonMessage string `json:"blockReasonMessage"`
 		} `json:"promptFeedback"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return "", fmt.Errorf("gemini: decode response: %w", err)
 	}
 	if len(out.Candidates) == 0 {
-		return "", fmt.Errorf("gemini: no candidates (blockReason=%q)", out.PromptFeedback.BlockReason)
+		return "", scrub(fmt.Sprintf("gemini refused to process this text (blockReason=%q%s)",
+			out.PromptFeedback.BlockReason, detail(out.PromptFeedback.BlockReasonMessage)), apiKey)
 	}
 	var sb strings.Builder
 	for _, p := range out.Candidates[0].Content.Parts {
@@ -111,7 +115,8 @@ func GenerateJSON(ctx context.Context, apiKey, model, system, user string) (stri
 	}
 	text := strings.TrimSpace(sb.String())
 	if text == "" {
-		return "", fmt.Errorf("gemini: empty response (finishReason=%q)", out.Candidates[0].FinishReason)
+		return "", scrub(fmt.Sprintf("gemini: empty response (finishReason=%q%s)",
+			out.Candidates[0].FinishReason, detail(out.Candidates[0].FinishMessage)), apiKey)
 	}
 	return stripFence(text), nil
 }
@@ -125,6 +130,14 @@ func stripFence(s string) string {
 		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
 	}
 	return strings.TrimSpace(s)
+}
+
+// detail renders an optional server-provided message as ", message=...".
+func detail(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	return fmt.Sprintf(", message=%q", truncate(msg, 200))
 }
 
 func scrub(msg, key string) error {

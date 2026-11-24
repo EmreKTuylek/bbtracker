@@ -37,11 +37,18 @@ func TestListWriteupsAnalysisState(t *testing.T) {
 	if rows[0].AnalysisStatus != "" || len(rows[0].TechTags) != 0 {
 		t.Fatalf("fresh row: %+v", rows[0])
 	}
-	if _, _, err := st.EnqueueAnalysis(id, false); err != nil {
+	jobID, _, err := st.EnqueueAnalysis(id, false)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ = st.ListWriteups("all", 10); rows[0].AnalysisStatus != "queued" {
 		t.Fatalf("want queued, got %q", rows[0].AnalysisStatus)
+	}
+	if err := st.FinishJob(jobID, "failed", 1, "boom", 0); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListWriteups("all", 10); rows[0].AnalysisStatus != "failed" || rows[0].AnalysisError != "boom" {
+		t.Fatalf("want failed/boom, got %q/%q", rows[0].AnalysisStatus, rows[0].AnalysisError)
 	}
 	if err := st.SaveAnalysis(Analysis{WriteupID: id, Provider: "gemini", Model: "m", VulnClass: "IDOR", Summary: "s",
 		RootCause: "r", AttackFlow: []byte("[]"), Fix: []byte("{}"), TestChecklist: []byte("[]"),

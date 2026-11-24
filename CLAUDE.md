@@ -1171,6 +1171,16 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
     different vocabularies, so one bug class can appear as two rows until its
     reports are analyzed. Rendered in `#learn-weekly` above the list; loaded
     on `showLearn` and after a sync, and a failure there never breaks the list.
+  - **Gemini "no candidates, blockReason=OTHER"** (seen live on exploit-heavy
+    reports, e.g. a sandbox escape): the prompt itself was refused. It's not
+    retried (a block isn't transient) and **`safetySettings` was deliberately
+    not added** — Google's safety guide says the adjustable filters are already
+    `Off` by default for Gemini 2.5+, `OTHER` isn't an adjustable category, and
+    `BLOCK_NONE` vs `OFF` per-model support is unstated (a wrong value would 400
+    every call, including the key check). Instead the error now carries Gemini's
+    `blockReason`/`blockReasonMessage`/`finishMessage`, and the list rows expose
+    `analysis_error` (latest job's error) shown beside the status in the Analysis
+    column (full text in the tooltip). The user can still hit Retry/Analyze anyway.
   - **Learn UI (week 3)**: `GET /api/writeups` now carries each row's
     `vuln_class`, `tech_tags` and `analysis_status` (`done` if an analysis
     exists, else the latest job's stage) via LEFT JOINs in `ListWriteups`.

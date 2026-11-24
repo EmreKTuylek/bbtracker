@@ -220,6 +220,7 @@ type Writeup struct {
 	VulnClass      string   `json:"vuln_class"`
 	TechTags       []string `json:"tech_tags"`
 	AnalysisStatus string   `json:"analysis_status"` // "" | queued | analyzing | done | skipped | failed
+	AnalysisError  string   `json:"analysis_error"`  // latest job's error/skip reason (also a 429 backoff reason while queued)
 }
 
 // Vulnerability is one nuclei template match for an asset, kept as a single

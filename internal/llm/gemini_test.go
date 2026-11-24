@@ -55,6 +55,17 @@ func TestGenerateJSONAuthErrorNotRetryable(t *testing.T) {
 	}
 }
 
+func TestGenerateJSONBlockMessage(t *testing.T) {
+	defer fake(t, 200, `{"promptFeedback":{"blockReason":"OTHER","blockReasonMessage":"why SECRET"}}`)()
+	_, err := GenerateJSON(context.Background(), "SECRET", "m1", "s", "u")
+	if err == nil || !strings.Contains(err.Error(), `blockReason="OTHER"`) || !strings.Contains(err.Error(), "why") {
+		t.Fatalf("want blockReason + message, got %v", err)
+	}
+	if strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("key leaked: %v", err)
+	}
+}
+
 func TestGenerateJSONNoCandidates(t *testing.T) {
 	defer fake(t, 200, `{"promptFeedback":{"blockReason":"SAFETY"}}`)()
 	if _, err := GenerateJSON(context.Background(), "SECRET", "m1", "s", "u"); err == nil || !strings.Contains(err.Error(), "SAFETY") {

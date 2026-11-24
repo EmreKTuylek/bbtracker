@@ -2363,6 +2363,37 @@ async function showLearn() {
   } catch (err) {
     showToast("Error: " + err.message, "error");
   }
+  loadWeekly().catch(() => {}); // a side panel: never blocks or errors the list
+}
+
+// "This week": top bug classes among reports disclosed in the last 7 days, and
+// what the top class has in common (its analyzed root causes + common tech).
+async function loadWeekly() {
+  const box = el("#learn-weekly");
+  const sum = await api("/api/writeups/weekly?days=7");
+  box.innerHTML = "";
+  if (!sum.total) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  box.appendChild(mk("h4", `This week: ${sum.total} report(s) disclosed`));
+  const chips = mk("div", null, "weekly-classes");
+  for (const c of sum.classes) chips.appendChild(mk("span", `${c.class} · ${c.count}`, "analysis-tag"));
+  box.appendChild(chips);
+  if (sum.top_class) {
+    const top = sum.classes.find((c) => c.class === sum.top_class);
+    box.appendChild(mk("p", `Most common: ${sum.top_class} (${top.count}, ${top.analyzed} analyzed)` +
+      (sum.top_tech.length ? " · common tech: " + sum.top_tech.join(", ") : "")));
+    if (sum.examples.length) {
+      box.appendChild(mk("p", "What these have in common (root causes from analyzed reports):", "muted"));
+      const ul = mk("ul");
+      for (const e of sum.examples) ul.appendChild(mk("li", `${e.title}: ${e.root_cause}`));
+      box.appendChild(ul);
+    } else {
+      box.appendChild(mk("p", "Analyze some of these reports to see their shared root causes.", "muted"));
+    }
+  }
 }
 
 // ponytail: the quality filter re-fetches from the server; search and the
@@ -2596,6 +2627,7 @@ el("#learn-sync-btn").addEventListener("click", async () => {
     const res = await api("/api/writeups/sync", { method: "POST" });
     el("#learn-status").textContent = `Synced: ${res.new} new report(s).`;
     await loadWriteups();
+    loadWeekly().catch(() => {});
   } catch (err) {
     el("#learn-status").textContent = "Error: " + err.message;
     showToast("Error: " + err.message, "error");

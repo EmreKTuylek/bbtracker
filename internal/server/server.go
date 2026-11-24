@@ -90,6 +90,7 @@ func (s *Server) routes() {
 	// Write-ups (disclosed HackerOne reports)
 	s.mux.HandleFunc("GET /api/writeups", s.handleListWriteups)
 	s.mux.HandleFunc("POST /api/writeups/sync", s.handleSyncWriteups)
+	s.mux.HandleFunc("GET /api/writeups/weekly", s.handleWeeklyWriteups)
 	s.mux.HandleFunc("POST /api/writeups/analyze-bulk", s.handleAnalyzeBulk)
 	s.mux.HandleFunc("POST /api/writeups/{id}/analyze", s.handleAnalyzeWriteup)
 	s.mux.HandleFunc("GET /api/writeups/{id}/analysis", s.handleGetAnalysis)

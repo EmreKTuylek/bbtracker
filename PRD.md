@@ -128,8 +128,9 @@ binary.
   validated Turkish purple-team analysis (root cause, attack flow, fix,
   detection, test checklist, and a separate "unknowns" list), browsable in the
   Learn tab with bug-class / technology / analyzed filters, per-report Analyze
-  and a bulk "Analyze top 20". A showcase page and weekly pattern summary are
-  planned, see `WRITEUP_MODULE.md`.
+  and a bulk "Analyze top 20", plus a "This week" panel: top bug classes among
+  the last 7 days' disclosures and what the leading class has in common. No
+  public showcase page and no second source (see CLAUDE.md for why).
 
 ## Non-goals (v1)
 
@@ -255,6 +256,7 @@ binary.
 | POST | `/api/writeups/sync` | Sync disclosed reports from HackerOne Hacktivity now |
 | POST | `/api/writeups/{id}/analyze` | Queue one deep Gemini analysis (needs key + model names in Settings) |
 | POST | `/api/writeups/analyze-bulk?limit=N` | Queue triage-gated analysis of the newest N detailed, un-analyzed reports |
+| GET | `/api/writeups/weekly?days=7` | Top bug classes of recently disclosed reports + the top class' common tech and root causes |
 | GET | `/api/writeups/{id}/analysis` | The analysis (if any) plus the latest job state |
 | PATCH | `/api/findings/{kind}/{id}` | Set a finding's triage status/notes (kind: vulnerabilities, cors, fuzz, github, cloud, js, params, takeover, tls, dns) |
 | GET | `/api/programs/{id}/export?type=<t>` | Download a program's table as CSV (assets, bounties, or any findings type) |

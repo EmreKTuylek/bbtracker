@@ -1094,9 +1094,16 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   the single-user Go/SQLite adaptation — no `user_id`, no RLS. Weeks 1-3 are
   built: fetch, dedupe, heuristic quality flag, daily sync, LLM settings, the
   Gemini adapter, job queue/backoff, triage + deep analysis, and the Learn UI
-  (below). Not built (week 4): `/showcase`, the weekly pattern summary, a
-  second source. The spec's separate `/learn/[id]` and `/settings/llm` pages
-  are a modal and the sidebar settings panel here (no client-side router).
+  (below), and the "This week" pattern panel. The spec's separate
+  `/learn/[id]` and `/settings/llm` pages are a modal and the sidebar settings
+  panel here (no client-side router). **Week 4's other two items were
+  deliberately not built**: `/showcase` (a public SEO/promo page has no
+  meaning for a local, no-account, single-user tool) and the second source.
+  Medium's tag RSS (`medium.com/feed/tag/bug-bounty`, checked live) carries only
+  a one-paragraph snippet + "Continue reading", no `content:encoded` — full text
+  would mean scraping article pages (against the spec's "official API, not
+  scraping" rule) and snippet-only analysis is no better than HackerOne's
+  summary; Bugcrowd has no public API. Re-raise before adding either.
   - **The Hacker API does not return other people's report bodies.**
     `GET /v1/hackers/hacktivity` items carry metadata plus HackerOne's generated
     `hacktivity_summary`; `vulnerability_information` (the full body) is only
@@ -1154,6 +1161,16 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
     therefore builds every node with the `mk()` helper (`textContent` only,
     never `innerHTML` for these fields) and `safeLink()` only emits an `<a>` for
     `http(s)` URLs.
+  - **Weekly patterns (week 4)**: `GET /api/writeups/weekly?days=7` →
+    `Store.WeeklyPatterns` (`writeups_weekly.go`): counts of reports disclosed
+    in the window by class (the analysis' `vuln_class`, else HackerOne's
+    `weakness`, else `unknown`; grouped case-insensitively), then for the top
+    non-unknown class its most common `tech_tags` and up to 5 analyzed root
+    causes as the "common thread". No LLM call, so it's free and instant.
+    Known limit: the model's class names and HackerOne's weakness names are
+    different vocabularies, so one bug class can appear as two rows until its
+    reports are analyzed. Rendered in `#learn-weekly` above the list; loaded
+    on `showLearn` and after a sync, and a failure there never breaks the list.
   - **Learn UI (week 3)**: `GET /api/writeups` now carries each row's
     `vuln_class`, `tech_tags` and `analysis_status` (`done` if an analysis
     exists, else the latest job's stage) via LEFT JOINs in `ListWriteups`.

@@ -3,9 +3,13 @@ package server
 import (
 	"net/http"
 
+	"bbtracker/internal/llm"
 	"bbtracker/internal/store"
 	"bbtracker/internal/telegram"
 )
+
+// geminiCheck verifies a new Gemini key; a var so tests can stub it.
+var geminiCheck = llm.GenerateJSON
 
 // settingsRequest is the body for PUT /api/settings.
 type settingsRequest struct {
@@ -116,6 +120,30 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		uncoverKeys = current.UncoverAPIKeys
 	}
 
+	geminiKey := req.GeminiAPIKey
+	switch {
+	case req.ClearGeminiAPIKey:
+		geminiKey = ""
+	case geminiKey == "":
+		geminiKey = current.GeminiAPIKey
+	default:
+		// A new key is verified with one tiny call before it is stored (spec 5),
+		// so a typo is rejected now instead of failing analysis jobs later.
+		model := req.GeminiTriageModel
+		if model == "" {
+			model = req.GeminiAnalysisModel
+		}
+		if model == "" {
+			writeError(w, http.StatusBadRequest, "enter a Gemini model name to verify the key with")
+			return
+		}
+		if _, err := geminiCheck(r.Context(), geminiKey, model,
+			"Return only a JSON object.", `{"ok": true}`); err != nil {
+			writeError(w, http.StatusBadRequest, "Gemini key check failed: "+err.Error())
+			return
+		}
+	}
+
 	if req.TelegramEnabled && (botToken == "" || req.TelegramChatID == "") {
 		writeError(w, http.StatusBadRequest, "bot token and chat id are required to enable notifications")
 		return
@@ -129,13 +157,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	geminiKey := req.GeminiAPIKey
-	switch {
-	case req.ClearGeminiAPIKey:
-		geminiKey = ""
-	case geminiKey == "":
-		geminiKey = current.GeminiAPIKey
-	}
 	if err := s.st.UpdateGeminiSettings(geminiKey, req.GeminiTriageModel, req.GeminiAnalysisModel); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -122,9 +122,12 @@ binary.
 - Write-up library (Learn tab): disclosed HackerOne reports synced daily from
   the Hacktivity feed into a searchable list with a heuristic detail flag,
   linking to the original report. Metadata plus HackerOne's generated summary
-  only (the API withholds other people's full report bodies). LLM root-cause
-  analysis (BYOK Gemini) is planned, see `WRITEUP_MODULE.md`; only the key/model
-  settings exist so far.
+  only (the API withholds other people's full report bodies). Optional LLM
+  root-cause analysis with the user's own Gemini key (BYOK): a sequential job
+  queue with rate-limit backoff, a cheap triage gate for bulk runs, and a
+  validated Turkish purple-team analysis (root cause, attack flow, fix,
+  detection, test checklist, and a separate "unknowns" list). API only so far;
+  the UI is planned, see `WRITEUP_MODULE.md`.
 
 ## Non-goals (v1)
 
@@ -246,6 +249,11 @@ binary.
 | GET | `/api/programs/{id}/tls-findings` | List TLS certificate findings for a program |
 | GET | `/api/programs/{id}/dns-findings` | List DNS/infrastructure findings for a program |
 | GET | `/api/programs/{id}/crawled-urls` | List katana-crawled URLs for a program |
+| GET | `/api/writeups` | List synced disclosed reports (`?quality=ok\|low\|all`; never includes the report text) |
+| POST | `/api/writeups/sync` | Sync disclosed reports from HackerOne Hacktivity now |
+| POST | `/api/writeups/{id}/analyze` | Queue one deep Gemini analysis (needs key + model names in Settings) |
+| POST | `/api/writeups/analyze-bulk?limit=N` | Queue triage-gated analysis of the newest N detailed, un-analyzed reports |
+| GET | `/api/writeups/{id}/analysis` | The analysis (if any) plus the latest job state |
 | PATCH | `/api/findings/{kind}/{id}` | Set a finding's triage status/notes (kind: vulnerabilities, cors, fuzz, github, cloud, js, params, takeover, tls, dns) |
 | GET | `/api/programs/{id}/export?type=<t>` | Download a program's table as CSV (assets, bounties, or any findings type) |
 | GET | `/api/settings` | Get Telegram notification settings, GitHub token, scan retention count, HackerOne credentials, Uncover API keys |

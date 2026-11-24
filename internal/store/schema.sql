@@ -419,3 +419,42 @@ CREATE TABLE IF NOT EXISTS writeups (
     UNIQUE(source, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_writeups_disclosed ON writeups(disclosed_at DESC);
+
+-- LLM analysis of one write-up (single user, so unique per writeup+lang; the
+-- spec's user_id/RLS are dropped). The JSON-ish columns hold the validated
+-- model output verbatim as JSON text; see internal/analysis.
+CREATE TABLE IF NOT EXISTS analyses (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    writeup_id     INTEGER NOT NULL REFERENCES writeups(id) ON DELETE CASCADE,
+    provider       TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    quality_score  INTEGER,           -- NULL when triage was skipped (single analysis)
+    vuln_class     TEXT NOT NULL,
+    tech_tags      TEXT NOT NULL DEFAULT '[]',
+    summary        TEXT NOT NULL,
+    root_cause     TEXT NOT NULL,
+    attack_flow    TEXT NOT NULL,
+    fix            TEXT NOT NULL,
+    detection      TEXT NOT NULL DEFAULT 'null',
+    test_checklist TEXT NOT NULL,
+    unknowns       TEXT NOT NULL DEFAULT '[]',
+    lang           TEXT NOT NULL DEFAULT 'tr',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(writeup_id, lang)
+);
+CREATE INDEX IF NOT EXISTS idx_analyses_vuln_class ON analyses(vuln_class);
+
+-- Work queue for the analysis worker (internal/analysis). run_after is UTC in
+-- datetime('now') format so it compares as text; used for 429 backoff.
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    writeup_id   INTEGER NOT NULL REFERENCES writeups(id) ON DELETE CASCADE,
+    triage       INTEGER NOT NULL DEFAULT 0,  -- 1 = run the cheap triage gate first (bulk mode)
+    triage_score INTEGER,                     -- cached so a retry doesn't re-pay for triage
+    stage        TEXT NOT NULL DEFAULT 'queued' CHECK (stage IN ('queued','triage','analyzing','done','skipped','failed')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    error        TEXT NOT NULL DEFAULT '',
+    run_after    TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_jobs_due ON analysis_jobs(stage, run_after);

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"bbtracker/internal/analysis"
 	"bbtracker/internal/recon"
 	"bbtracker/internal/scheduler"
 	"bbtracker/internal/server"
@@ -46,6 +47,7 @@ func main() {
 	sched := scheduler.New(st, engine)
 	go sched.Run(schedCtx)
 	go writeups.Run(schedCtx, st)
+	go analysis.NewWorker(st).Run(schedCtx)
 
 	url := "http://" + *addr + "/"
 	log.Printf("bbtracker starting at %s (db: %s)", url, *dbPath)

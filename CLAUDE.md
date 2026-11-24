@@ -46,6 +46,10 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 | `internal/hackerone/hacktivity.go` | `FetchHacktivity`: pages `GET /v1/hackers/hacktivity` (disclosed reports) for the write-up module. |
 | `internal/writeups/writeups.go` | `Sync`/`Run`/`QualityFlag`: Hacktivity → `writeups` table, startup + hourly check for a >24h-old sync. |
 | `internal/server/handlers_writeups.go` | `GET /api/writeups`, `POST /api/writeups/sync`. |
+| `internal/store/analyses.go` | `analyses` + `analysis_jobs` store: `EnqueueAnalysis` (dedupes), `ClaimDueJob`, `FinishJob` (carries the backoff `run_after`), `SaveAnalysis`, `GetAnalysis`, `GetWriteupText` (the only reader of `raw_text`). |
+| `internal/llm/gemini.go` | `GenerateJSON`: native Gemini `generateContent` client, key in the `x-goog-api-key` header, `*RetryError` for 429/5xx. |
+| `internal/analysis/analysis.go` | Prompts, Go output validation, and the sequential `Worker` (triage gate, deep analysis, backoff). |
+| `internal/server/handlers_analysis.go` | `POST /api/writeups/{id}/analyze`, `POST /api/writeups/analyze-bulk`, `GET /api/writeups/{id}/analysis`. |
 | `internal/recon/recon.go` | `Engine`/`Subfinder`/`HTTPProbe`/`VulnScanner` interfaces + orchestration (`Run`). |
 | `internal/recon/subfinder.go` | `LibSubfinder`: subfinder-as-library implementation of `Subfinder`. |
 | `internal/recon/httpx.go` | `LibHTTPProbe`: httpx-as-library implementation of `HTTPProbe`. |
@@ -1087,10 +1091,11 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 - **Write-up module (Learn tab, week 1 of `WRITEUP_MODULE.md`)**: pulls
   *disclosed* HackerOne reports into `writeups` and lists them in the sidebar's
   "Learn" view. The spec assumed Next.js + Supabase (multi-user, RLS); this is
-  the single-user Go/SQLite adaptation — no `user_id`, no RLS. Only week 1 is
-  built: fetch, dedupe, heuristic quality flag, daily sync, LLM settings. The
-  Gemini adapter, `analyses`/`analysis_jobs` tables, job queue/backoff and the
-  per-report detail page are **not built** (weeks 2-3).
+  the single-user Go/SQLite adaptation — no `user_id`, no RLS. Weeks 1-2 are
+  built: fetch, dedupe, heuristic quality flag, daily sync, LLM settings, the
+  Gemini adapter, job queue/backoff and triage + deep analysis (below). The
+  UI for it (analyze buttons, `/learn/[id]` detail page, bulk button) is
+  **not built** (week 3); today the analysis API is only reachable via HTTP.
   - **The Hacker API does not return other people's report bodies.**
     `GET /v1/hackers/hacktivity` items carry metadata plus HackerOne's generated
     `hacktivity_summary`; `vulnerability_information` (the full body) is only
@@ -1111,7 +1116,41 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
     needs the explicit `clear_gemini_api_key: true` (the "Remove key" button
     re-submits the whole form with it). It is stored via
     `Store.UpdateGeminiSettings`, deliberately separate from the already-long
-    `UpdateSettings` signature. Nothing reads the key yet.
+    `UpdateSettings` signature. A **new** key is verified with one tiny
+    `generateContent` call *before anything is saved* (`geminiCheck` in
+    `handlers_settings.go`, a var so tests stub it); a rejected key is a 400 and
+    isn't stored. A blank key (keep) is not re-checked.
+  - **Analysis pipeline (week 2)**: `analysis.Worker` (started in `main.go`)
+    drains `analysis_jobs` strictly one at a time, `Pace` (6s) between LLM
+    calls, polling every 5s. Single analyze = deep model only; bulk
+    (`analyze-bulk?limit=N`, newest detailed un-analyzed, default 20, max 100)
+    = triage model first, and a score below 5 ends the job as `skipped` with the
+    reason. The triage score is cached on the job (`triage_score`) so a 429 retry
+    doesn't re-pay for it. Errors are classified: `*llm.RetryError` (429/5xx)
+    requeues with exponential backoff from 15s (never shorter than the server's
+    `retryDelay` hint, capped at 15m, `maxAttempts` = 5 then `failed`); invalid
+    model output is retried once *inside the same attempt* (`callValidated`)
+    then fails; anything else (bad key, 400) fails immediately. Jobs stranded by
+    a crash are requeued at startup (`ResetStaleJobs`).
+  - **Structured output is prompt-described and Go-validated, not native
+    `responseSchema`.** Google's docs conflict on `responseSchema` vs
+    `responseJsonSchema`, so `llm.GenerateJSON` only sets
+    `responseMimeType: application/json`; the schema lives in the system prompt
+    and `parseDeep`/`parseTriage` are the zod equivalent. `deepOut` also asks
+    for `vuln_class` (the spec's output schema lacked it, but `analyses.vuln_class`
+    is NOT NULL and single mode has no triage to supply it). The API key goes in
+    the `x-goog-api-key` header, not `?key=` (the docs show both): net/http errors
+    embed the URL, so a header keeps the key out of error text; it is also
+    scrubbed from messages. **Unverified live** — no real key was used; the 429
+    `retryDelay` shape, header auth on this endpoint, and the prompts' quality
+    (does `root_cause` really avoid just naming the vuln? does it invent?) need
+    the 20-30 real reports the spec calls for. Model IDs are never hardcoded:
+    Google's own page says `gemini-2.5-flash/pro` start auto-routing to other
+    models on 2026-12-01, so users pick names in Settings.
+  - **Untrusted input in, untrusted output out**: report text is third-party
+    content fed to an LLM (prompts tell it to treat it as data, wrapped in
+    `<rapor_metni>`), and the analysis fields are model output — the week-3 UI
+    must render them with `textContent`, never `innerHTML`.
   - `writeups.Run` is started in `main.go` next to the scheduler: syncs at
     startup, then hourly checks `writeups_last_sync_at` and syncs if >24h old
     (a desktop app may not stay up 24h, so a plain 24h ticker would never fire).

@@ -126,8 +126,10 @@ binary.
   root-cause analysis with the user's own Gemini key (BYOK): a sequential job
   queue with rate-limit backoff, a cheap triage gate for bulk runs, and a
   validated Turkish purple-team analysis (root cause, attack flow, fix,
-  detection, test checklist, and a separate "unknowns" list). API only so far;
-  the UI is planned, see `WRITEUP_MODULE.md`.
+  detection, test checklist, and a separate "unknowns" list), browsable in the
+  Learn tab with bug-class / technology / analyzed filters, per-report Analyze
+  and a bulk "Analyze top 20". A showcase page and weekly pattern summary are
+  planned, see `WRITEUP_MODULE.md`.
 
 ## Non-goals (v1)
 

@@ -130,6 +130,7 @@
       <div class="panel-header">
         <h2>Learn: disclosed reports</h2>
         <button type="button" id="learn-sync-btn">Sync now</button>
+        <button type="button" id="learn-bulk-btn" class="btn-secondary" title="Triage the newest detailed reports with the cheap model, then analyze the good ones">Analyze top 20</button>
       </div>
       <p id="learn-status" class="muted">Disclosed HackerOne reports (needs HackerOne credentials in Settings). Syncs daily while bbtracker is running.</p>
       <div class="toolbar">
@@ -142,11 +143,18 @@
           <option value="ok">Detailed only</option>
           <option value="low">Low detail</option>
         </select>
+        <select id="learn-status-filter">
+          <option value="">Analyzed + not</option>
+          <option value="done">Analyzed</option>
+          <option value="todo">Not analyzed</option>
+        </select>
+        <select id="learn-class"></select>
+        <select id="learn-tech"></select>
       </div>
       <div class="table-wrap" data-empty="No reports yet. Add HackerOne credentials in Settings and click Sync now.">
         <table id="learn-table" class="table">
           <thead>
-            <tr><th>Report</th><th>Program</th><th>Weakness</th><th>Severity</th><th>Bounty</th><th>Disclosed</th><th>Detail</th></tr>
+            <tr><th>Report</th><th>Program</th><th>Weakness</th><th>Severity</th><th>Bounty</th><th>Disclosed</th><th>Detail</th><th>Analysis</th><th></th></tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -802,6 +810,15 @@
         <span id="report-modal-copied" class="muted"></span>
       </div>
     </div>
+  </div>
+</div>
+<div id="writeup-modal" class="screenshot-modal scan-diff-modal hidden">
+  <div class="scan-diff-card">
+    <div class="scan-diff-header">
+      <h3 id="writeup-modal-title"></h3>
+      <button type="button" id="writeup-modal-close-btn" class="icon-btn">Close</button>
+    </div>
+    <div id="writeup-modal-body" class="scan-diff-body analysis-body"></div>
   </div>
 </div>
 <div id="toast-container" class="toast-container"></div>

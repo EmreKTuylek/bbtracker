@@ -215,6 +215,11 @@ type Writeup struct {
 	ContentHash string  `json:"-"`
 	QualityFlag string  `json:"quality_flag"`
 	CreatedAt   string  `json:"created_at"`
+
+	// List-only, from analyses/analysis_jobs (see ListWriteups).
+	VulnClass      string   `json:"vuln_class"`
+	TechTags       []string `json:"tech_tags"`
+	AnalysisStatus string   `json:"analysis_status"` // "" | queued | analyzing | done | skipped | failed
 }
 
 // Vulnerability is one nuclei template match for an asset, kept as a single

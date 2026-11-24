@@ -24,3 +24,32 @@ func TestSaveWriteupDedupe(t *testing.T) {
 		t.Fatalf("list: %+v err=%v", rows, err)
 	}
 }
+
+func TestListWriteupsAnalysisState(t *testing.T) {
+	st, err := Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.SaveWriteup(Writeup{Source: "hackerone", ExternalID: "1", URL: "u", Title: "a", ContentHash: "h", QualityFlag: "ok"})
+	rows, _ := st.ListWriteups("all", 10)
+	id := rows[0].ID
+	if rows[0].AnalysisStatus != "" || len(rows[0].TechTags) != 0 {
+		t.Fatalf("fresh row: %+v", rows[0])
+	}
+	if _, _, err := st.EnqueueAnalysis(id, false); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListWriteups("all", 10); rows[0].AnalysisStatus != "queued" {
+		t.Fatalf("want queued, got %q", rows[0].AnalysisStatus)
+	}
+	if err := st.SaveAnalysis(Analysis{WriteupID: id, Provider: "gemini", Model: "m", VulnClass: "IDOR", Summary: "s",
+		RootCause: "r", AttackFlow: []byte("[]"), Fix: []byte("{}"), TestChecklist: []byte("[]"),
+		TechTags: []byte(`["rest","jwt"]`), Detection: []byte("null"), Unknowns: []byte("[]"), Lang: "tr"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = st.ListWriteups("all", 10)
+	if r := rows[0]; r.AnalysisStatus != "done" || r.VulnClass != "IDOR" || len(r.TechTags) != 2 {
+		t.Fatalf("analyzed row: %+v", r)
+	}
+}

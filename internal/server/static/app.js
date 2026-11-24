@@ -2344,9 +2344,10 @@ function renderEarningsChart() {
 
 // ---------- Learn (disclosed write-ups) ----------
 
+let learnPollTimer = null;
+const LEARN_BULK_LIMIT = 20;
+
 // Same view toggle as showDashboard/selectProgram: hides the others.
-// ponytail: quality filter re-fetches from the server, search is client-side;
-// the list is capped at 500 rows server-side.
 async function showLearn() {
   state.currentProgramId = null;
   stopPolling();
@@ -2364,43 +2365,229 @@ async function showLearn() {
   }
 }
 
+// ponytail: the quality filter re-fetches from the server; search and the
+// class/tech/status filters are client-side over the (server-capped, 500) list.
 async function loadWriteups() {
   state.writeups = await api("/api/writeups?quality=" + encodeURIComponent(el("#learn-quality").value));
+  fillLearnFilters();
   renderWriteups();
+  scheduleLearnPoll();
+}
+
+// While a job is queued/running, refresh every 4s; stops by itself once
+// nothing is pending or the Learn view is hidden (no hooks in the other views).
+function scheduleLearnPoll() {
+  clearTimeout(learnPollTimer);
+  const pending = (state.writeups || []).some((w) => w.analysis_status === "queued" || w.analysis_status === "analyzing");
+  if (!pending || el("#learn-view").classList.contains("hidden")) return;
+  learnPollTimer = setTimeout(() => loadWriteups().catch(() => {}), 4000);
+}
+
+function fillSelect(sel, allLabel, values) {
+  const s = el(sel);
+  const cur = s.value;
+  s.innerHTML = "";
+  s.appendChild(new Option(allLabel, ""));
+  const uniq = [...new Set(values)].sort();
+  for (const v of uniq) s.appendChild(new Option(v, v));
+  s.value = uniq.includes(cur) ? cur : "";
+}
+
+function fillLearnFilters() {
+  const rows = state.writeups || [];
+  fillSelect("#learn-class", "All bug classes", rows.map((w) => w.vuln_class).filter(Boolean));
+  fillSelect("#learn-tech", "All technologies", rows.flatMap((w) => w.tech_tags || []));
+}
+
+// mk builds an element with textContent only: analysis fields are model
+// output and report fields are third-party text, so never innerHTML.
+function mk(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text != null) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function safeLink(text, url) {
+  if (!/^https?:\/\//i.test(url || "")) return mk("span", text);
+  const a = mk("a", text);
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
 }
 
 function renderWriteups() {
   const tbody = el("#learn-table tbody");
   tbody.innerHTML = "";
-  const rows = filterBySearch(state.writeups || [], "#learn-search", (w) => [w.title, w.program, w.weakness]);
+  const cls = el("#learn-class").value;
+  const tech = el("#learn-tech").value;
+  const status = el("#learn-status-filter").value;
+  const rows = filterBySearch(state.writeups || [], "#learn-search", (w) => [w.title, w.program, w.weakness, w.vuln_class])
+    .filter((w) => !cls || w.vuln_class === cls)
+    .filter((w) => !tech || (w.tech_tags || []).includes(tech))
+    .filter((w) => !status || (status === "done") === (w.analysis_status === "done"));
   for (const w of rows) {
     const tr = document.createElement("tr");
     const titleCell = document.createElement("td");
-    const a = document.createElement("a");
-    a.href = w.url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = w.title;
-    titleCell.appendChild(a);
+    titleCell.appendChild(safeLink(w.title, w.url));
     tr.appendChild(titleCell);
     tr.appendChild(td(w.program));
     tr.appendChild(td(w.weakness));
     const sev = document.createElement("td");
-    const badge = document.createElement("span");
-    badge.className = "sev-badge sev-" + (w.severity || "info");
-    badge.textContent = w.severity || "n/a";
-    sev.appendChild(badge);
+    sev.appendChild(mk("span", w.severity || "n/a", "sev-badge sev-" + (w.severity || "info")));
     tr.appendChild(sev);
     tr.appendChild(td(w.bounty ? "$" + w.bounty : ""));
     tr.appendChild(td((w.disclosed_at || "").slice(0, 10)));
     tr.appendChild(td(w.quality_flag === "ok" ? "detailed" : "low"));
+    tr.appendChild(td(w.analysis_status === "done" ? w.vuln_class : w.analysis_status));
+    const actionCell = document.createElement("td");
+    actionCell.appendChild(analysisAction(w));
+    tr.appendChild(actionCell);
     tbody.appendChild(tr);
   }
 }
 
+// ponytail: skipped/failed jobs don't show their error text in the list; the
+// job's `error` is available from GET /api/writeups/{id}/analysis.
+function analysisAction(w) {
+  const b = mk("button", "Analyze", "btn-secondary");
+  b.type = "button";
+  switch (w.analysis_status) {
+    case "done":
+      b.textContent = "View";
+      b.addEventListener("click", () => openWriteup(w));
+      return b;
+    case "queued":
+    case "analyzing":
+      b.textContent = "Queued…";
+      b.disabled = true;
+      return b;
+    case "skipped":
+      b.textContent = "Analyze anyway";
+      break;
+    case "failed":
+      b.textContent = "Retry";
+      break;
+  }
+  b.addEventListener("click", () => analyzeWriteup(w));
+  return b;
+}
+
+// Without a saved key + analysis model there is nothing to run: point the user
+// at the settings field instead of letting the request 400.
+function needGeminiSettings() {
+  showToast("Save a Gemini API key and model names in Settings first.", "error");
+  el("#gemini-key").scrollIntoView({ block: "center" });
+  el("#gemini-key").focus();
+}
+
+async function analyzeWriteup(w) {
+  if (!state.geminiReady) return needGeminiSettings();
+  try {
+    await api(`/api/writeups/${w.id}/analyze`, { method: "POST" });
+    el("#learn-status").textContent = "Analysis queued.";
+    await loadWriteups();
+  } catch (err) {
+    showToast("Error: " + err.message, "error");
+  }
+}
+
+async function openWriteup(w) {
+  const body = el("#writeup-modal-body");
+  el("#writeup-modal-title").textContent = w.title;
+  body.textContent = "Loading...";
+  el("#writeup-modal").classList.remove("hidden");
+  try {
+    const res = await api(`/api/writeups/${w.id}/analysis`);
+    renderAnalysis(body, w, res.analysis);
+  } catch (err) {
+    body.textContent = "Error: " + err.message;
+  }
+}
+
+function renderAnalysis(body, w, a) {
+  body.innerHTML = ""; // clear only; every node below is built with textContent
+  if (!a) {
+    body.appendChild(mk("p", "No analysis yet."));
+    return;
+  }
+  const sec = (title, ...nodes) => {
+    body.appendChild(mk("h4", title));
+    for (const n of nodes) body.appendChild(n);
+  };
+  const list = (tag, items) => {
+    const l = mk(tag);
+    for (const it of items || []) l.appendChild(mk("li", it));
+    return l;
+  };
+
+  const head = mk("p", null, "muted");
+  head.append(`${a.vuln_class}${w.program ? " · " + w.program : ""} · `);
+  head.appendChild(safeLink("original report", w.url));
+  body.appendChild(head);
+  if ((a.tech_tags || []).length) {
+    const tags = mk("div", null, "analysis-tags");
+    for (const t of a.tech_tags) tags.appendChild(mk("span", t, "analysis-tag"));
+    body.appendChild(tags);
+  }
+
+  sec("Summary", mk("p", a.summary));
+  sec("Root cause", mk("p", a.root_cause));
+
+  const flow = mk("ol");
+  for (const step of a.attack_flow || []) {
+    const li = mk("li", step.action);
+    li.appendChild(mk("span", "Why it works: " + step.why_it_works, "analysis-why"));
+    flow.appendChild(li);
+  }
+  sec("Attack flow", flow);
+
+  const fix = a.fix || {};
+  const fixNodes = [mk("p", "✗ Wrong: " + fix.wrong, "analysis-wrong"), mk("p", "✓ Right: " + fix.right, "analysis-right")];
+  if (fix.code_hint) fixNodes.push(mk("pre", fix.code_hint, "analysis-pre"));
+  sec("Fix", ...fixNodes);
+
+  if (a.detection && (a.detection.signals || []).length) {
+    sec("Detection" + (a.detection.where ? " (" + a.detection.where + ")" : ""), list("ul", a.detection.signals));
+  }
+  sec("Test checklist", list("ul", a.test_checklist));
+
+  if ((a.unknowns || []).length) {
+    const box = mk("div", null, "unknowns-box");
+    box.appendChild(mk("h4", "Assumptions (Tahminler)"));
+    box.appendChild(mk("p", "Not stated in the report: inferred by the model, treat with caution.", "muted"));
+    box.appendChild(list("ul", a.unknowns));
+    body.appendChild(box);
+  }
+  body.appendChild(mk("p", `Model: ${a.model}${a.quality_score != null ? " · triage score " + a.quality_score + "/10" : ""}`, "muted"));
+}
+
+el("#writeup-modal-close-btn").addEventListener("click", () => el("#writeup-modal").classList.add("hidden"));
+el("#writeup-modal").addEventListener("click", (e) => {
+  if (e.target.id === "writeup-modal") el("#writeup-modal").classList.add("hidden");
+});
+
 el("#learn-nav-btn").addEventListener("click", showLearn);
 el("#learn-quality").addEventListener("change", () => loadWriteups().catch((e) => showToast("Error: " + e.message, "error")));
+for (const id of ["#learn-class", "#learn-tech", "#learn-status-filter"]) el(id).addEventListener("change", renderWriteups);
 el("#learn-search").addEventListener("input", debounce(renderWriteups, 200));
+
+el("#learn-bulk-btn").addEventListener("click", async () => {
+  if (!state.geminiReady) return needGeminiSettings();
+  const btn = el("#learn-bulk-btn");
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/writeups/analyze-bulk?limit=${LEARN_BULK_LIMIT}`, { method: "POST" });
+    el("#learn-status").textContent = `Queued ${res.queued} report(s) for triage + analysis (runs one at a time, paced for rate limits).`;
+    await loadWriteups();
+  } catch (err) {
+    showToast("Error: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 el("#learn-sync-btn").addEventListener("click", async () => {
   const btn = el("#learn-sync-btn");
   btn.disabled = true;
@@ -2449,6 +2636,7 @@ async function loadSettings() {
   el("#gemini-key").placeholder = tokenPlaceholder(settings.gemini_api_key_set, "Gemini API key");
   el("#gemini-triage-model").value = settings.gemini_triage_model || "";
   el("#gemini-analysis-model").value = settings.gemini_analysis_model || "";
+  state.geminiReady = !!settings.gemini_api_key_set && !!settings.gemini_analysis_model;
 }
 
 // "Remove key" re-submits the whole settings form with an explicit clear flag

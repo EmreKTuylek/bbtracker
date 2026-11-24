@@ -1333,3 +1333,16 @@ button.print-btn {
     print-color-adjust: exact;
   }
 }
+
+/* Learn: analysis detail modal */
+.analysis-body h4 { margin: 1rem 0 0.35rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.analysis-body p, .analysis-body li { line-height: 1.5; }
+.analysis-body ol, .analysis-body ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+.analysis-why { display: block; color: var(--muted); font-size: 0.9rem; }
+.analysis-pre { background: var(--bg-inset); border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; font-family: var(--font-mono); font-size: 0.85rem; white-space: pre-wrap; overflow-x: auto; }
+.analysis-wrong { color: var(--danger); }
+.analysis-right { color: var(--success); }
+.unknowns-box { margin-top: 1rem; padding: 0.6rem 0.9rem; border: 1px dashed var(--warning); background: var(--warning-soft); border-radius: var(--radius-md); }
+.unknowns-box h4 { margin-top: 0; color: var(--warning); }
+.analysis-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.4rem 0; }
+.analysis-tag { background: var(--bg-inset); border-radius: 999px; padding: 0.1rem 0.6rem; font-size: 0.8rem; }

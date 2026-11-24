@@ -1091,11 +1091,12 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 - **Write-up module (Learn tab, week 1 of `WRITEUP_MODULE.md`)**: pulls
   *disclosed* HackerOne reports into `writeups` and lists them in the sidebar's
   "Learn" view. The spec assumed Next.js + Supabase (multi-user, RLS); this is
-  the single-user Go/SQLite adaptation — no `user_id`, no RLS. Weeks 1-2 are
+  the single-user Go/SQLite adaptation — no `user_id`, no RLS. Weeks 1-3 are
   built: fetch, dedupe, heuristic quality flag, daily sync, LLM settings, the
-  Gemini adapter, job queue/backoff and triage + deep analysis (below). The
-  UI for it (analyze buttons, `/learn/[id]` detail page, bulk button) is
-  **not built** (week 3); today the analysis API is only reachable via HTTP.
+  Gemini adapter, job queue/backoff, triage + deep analysis, and the Learn UI
+  (below). Not built (week 4): `/showcase`, the weekly pattern summary, a
+  second source. The spec's separate `/learn/[id]` and `/settings/llm` pages
+  are a modal and the sidebar settings panel here (no client-side router).
   - **The Hacker API does not return other people's report bodies.**
     `GET /v1/hackers/hacktivity` items carry metadata plus HackerOne's generated
     `hacktivity_summary`; `vulnerability_information` (the full body) is only
@@ -1149,8 +1150,28 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
     models on 2026-12-01, so users pick names in Settings.
   - **Untrusted input in, untrusted output out**: report text is third-party
     content fed to an LLM (prompts tell it to treat it as data, wrapped in
-    `<rapor_metni>`), and the analysis fields are model output — the week-3 UI
-    must render them with `textContent`, never `innerHTML`.
+    `<rapor_metni>`), and the analysis fields are model output. The Learn UI
+    therefore builds every node with the `mk()` helper (`textContent` only,
+    never `innerHTML` for these fields) and `safeLink()` only emits an `<a>` for
+    `http(s)` URLs.
+  - **Learn UI (week 3)**: `GET /api/writeups` now carries each row's
+    `vuln_class`, `tech_tags` and `analysis_status` (`done` if an analysis
+    exists, else the latest job's stage) via LEFT JOINs in `ListWriteups`.
+    Filters (bug class, technology, analyzed/not, plus search) are client-side;
+    only the quality filter re-fetches. Per-row button: Analyze → Queued… (disabled)
+    → View; `skipped` offers "Analyze anyway" (a single analysis skips triage, so
+    it overrides the triage gate), `failed` offers Retry (a failed job isn't
+    "unfinished", so `EnqueueAnalysis` makes a new one). "Analyze top 20" calls
+    `analyze-bulk`. While any job is queued/analyzing the list re-fetches every
+    4s (`scheduleLearnPoll`), stopping by itself when nothing is pending or the
+    view is hidden, so the other views need no hooks. With no saved key +
+    analysis model the buttons focus the Gemini key field instead of calling the
+    API (`state.geminiReady`, set in `loadSettings`). The detail modal
+    (`#writeup-modal`) orders summary → root cause → attack flow (each step with
+    "why it works") → fix (wrong/right/code hint) → detection → checklist → a
+    visually separate dashed **"Assumptions (Tahminler)"** box for `unknowns`.
+    **Not exercised in a real browser** — only JS syntax (`node --check`) and
+    the Go tests; open the Learn tab once with real data to check layout.
   - `writeups.Run` is started in `main.go` next to the scheduler: syncs at
     startup, then hourly checks `writeups_last_sync_at` and syncs if >24h old
     (a desktop app may not stay up 24h, so a plain 24h ticker would never fire).

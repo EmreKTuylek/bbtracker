@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -34,17 +35,23 @@ func (s *Store) SaveWriteup(w Writeup) (bool, error) {
 	return err == nil, err
 }
 
-// ListWriteups returns reports newest-disclosed first. quality is "ok", "low"
-// or "" / "all" for both. raw_text is intentionally not selected.
+// ListWriteups returns reports newest-disclosed first, each with its analysis
+// state: vuln_class/tech_tags from the analysis if one exists, and
+// analysis_status = "done" (analysis exists) or the latest job's stage.
+// quality is "ok", "low" or "" / "all". raw_text is intentionally not selected.
 func (s *Store) ListWriteups(quality string, limit int) ([]Writeup, error) {
-	q := `SELECT id, source, external_id, url, title, program, weakness, severity, bounty,
-			disclosed_at, quality_flag, created_at FROM writeups`
+	q := `SELECT w.id, w.source, w.external_id, w.url, w.title, w.program, w.weakness, w.severity, w.bounty,
+			w.disclosed_at, w.quality_flag, w.created_at,
+			COALESCE(a.vuln_class, ''), COALESCE(a.tech_tags, '[]'),
+			CASE WHEN a.id IS NOT NULL THEN 'done'
+			     ELSE COALESCE((SELECT stage FROM analysis_jobs j WHERE j.writeup_id = w.id ORDER BY j.id DESC LIMIT 1), '') END
+		FROM writeups w LEFT JOIN analyses a ON a.writeup_id = w.id AND a.lang = 'tr'`
 	args := []any{}
 	if quality == "ok" || quality == "low" {
-		q += ` WHERE quality_flag = ?`
+		q += ` WHERE w.quality_flag = ?`
 		args = append(args, quality)
 	}
-	q += ` ORDER BY disclosed_at DESC, id DESC LIMIT ?`
+	q += ` ORDER BY w.disclosed_at DESC, w.id DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -54,9 +61,14 @@ func (s *Store) ListWriteups(quality string, limit int) ([]Writeup, error) {
 	out := []Writeup{}
 	for rows.Next() {
 		var w Writeup
+		var tags string
 		if err := rows.Scan(&w.ID, &w.Source, &w.ExternalID, &w.URL, &w.Title, &w.Program, &w.Weakness,
-			&w.Severity, &w.Bounty, &w.DisclosedAt, &w.QualityFlag, &w.CreatedAt); err != nil {
+			&w.Severity, &w.Bounty, &w.DisclosedAt, &w.QualityFlag, &w.CreatedAt,
+			&w.VulnClass, &tags, &w.AnalysisStatus); err != nil {
 			return nil, err
+		}
+		if json.Unmarshal([]byte(tags), &w.TechTags) != nil || w.TechTags == nil {
+			w.TechTags = []string{}
 		}
 		out = append(out, w)
 	}

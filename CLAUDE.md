@@ -42,6 +42,10 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
 | `internal/store/triage.go` | `UpdateFindingTriage` — generic status/notes update across all 10 findings tables via a fixed kind→table whitelist. |
 | `internal/store/retention.go` | `PruneOldScans` — safely deletes old `scans` rows that no finding table still references. |
 | `internal/store/settings.go` | Single-row `app_settings` (Telegram bot token/chat id/enabled + per-category notify flags, GitHub token, scan retention count). |
+| `internal/store/writeups.go` | `SaveWriteup` (upsert by source+external_id, rewrites only when `content_hash` changed), `ListWriteups`, `MarkWriteupsSynced`, plus `UpdateGeminiSettings` in `settings.go`. |
+| `internal/hackerone/hacktivity.go` | `FetchHacktivity`: pages `GET /v1/hackers/hacktivity` (disclosed reports) for the write-up module. |
+| `internal/writeups/writeups.go` | `Sync`/`Run`/`QualityFlag`: Hacktivity → `writeups` table, startup + hourly check for a >24h-old sync. |
+| `internal/server/handlers_writeups.go` | `GET /api/writeups`, `POST /api/writeups/sync`. |
 | `internal/recon/recon.go` | `Engine`/`Subfinder`/`HTTPProbe`/`VulnScanner` interfaces + orchestration (`Run`). |
 | `internal/recon/subfinder.go` | `LibSubfinder`: subfinder-as-library implementation of `Subfinder`. |
 | `internal/recon/httpx.go` | `LibHTTPProbe`: httpx-as-library implementation of `HTTPProbe`. |
@@ -1079,6 +1083,42 @@ Flags: `-addr host:port`, `-db path/to/file.db`, `-no-browser`.
   `overflow: visible` (a scrollable `.table-wrap` would otherwise clip
   content when printed). No new dependency — the browser's own
   print-to-PDF, same as any other webpage.
+
+- **Write-up module (Learn tab, week 1 of `WRITEUP_MODULE.md`)**: pulls
+  *disclosed* HackerOne reports into `writeups` and lists them in the sidebar's
+  "Learn" view. The spec assumed Next.js + Supabase (multi-user, RLS); this is
+  the single-user Go/SQLite adaptation — no `user_id`, no RLS. Only week 1 is
+  built: fetch, dedupe, heuristic quality flag, daily sync, LLM settings. The
+  Gemini adapter, `analyses`/`analysis_jobs` tables, job queue/backoff and the
+  per-report detail page are **not built** (weeks 2-3).
+  - **The Hacker API does not return other people's report bodies.**
+    `GET /v1/hackers/hacktivity` items carry metadata plus HackerOne's generated
+    `hacktivity_summary`; `vulnerability_information` (the full body) is only
+    returned for reports the caller owns. So `writeups.raw_text` holds that short
+    summary, and `QualityFlag` (`ok`/`low`, naive length + marker check) is judged
+    on it. Getting real bodies is the open question in the spec's §11.2.
+  - **Undocumented bits, unverified live**: the exact `disclosed:true`
+    `queryString` value, `links.next` on hacktivity (pagination is therefore
+    `page[number]` until an empty page, capped at `maxPages` = 5 x 100), and rate
+    limits. `FetchHacktivity` also re-checks `attributes.disclosed` client-side.
+    Test with real credentials before relying on it. Reuses the HackerOne
+    username/token from Settings (same ones scope import uses).
+  - `raw_text` and `content_hash` are `json:"-"` and `ListWriteups` doesn't even
+    select `raw_text` — analysis input only, never served (spec §9).
+  - **Gemini key** (`app_settings.gemini_api_key` + two model-name columns, no
+    model names hardcoded) follows the existing token model: plaintext in the DB,
+    never returned (`gemini_api_key_set` only), blank on save = keep. Deleting it
+    needs the explicit `clear_gemini_api_key: true` (the "Remove key" button
+    re-submits the whole form with it). It is stored via
+    `Store.UpdateGeminiSettings`, deliberately separate from the already-long
+    `UpdateSettings` signature. Nothing reads the key yet.
+  - `writeups.Run` is started in `main.go` next to the scheduler: syncs at
+    startup, then hourly checks `writeups_last_sync_at` and syncs if >24h old
+    (a desktop app may not stay up 24h, so a plain 24h ticker would never fire).
+    A mutex makes the ticker and the manual "Sync now" button mutually exclusive.
+    Missing credentials is a silent no-op for the ticker and a 400 for the button.
+  - The Learn view is a fourth entry in the dashboard/program/empty-state view
+    toggle: `showLearn`, `showDashboard` and `selectProgram` all hide the others.
 
 ## When editing X, look at Y
 

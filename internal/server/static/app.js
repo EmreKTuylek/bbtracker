@@ -155,8 +155,10 @@ async function selectProgram(id) {
   if (!program) return;
 
   el("#dashboard-nav-btn").classList.remove("active");
+  el("#learn-nav-btn").classList.remove("active");
   el("#empty-state").classList.add("hidden");
   el("#dashboard-view").classList.add("hidden");
+  el("#learn-view").classList.add("hidden");
   el("#program-view").classList.remove("hidden");
   el("#program-name").textContent = program.name;
   el("#program-meta").textContent = [program.platform, program.url]
@@ -185,8 +187,10 @@ async function showDashboard() {
   stopPolling();
   renderProgramList();
   el("#dashboard-nav-btn").classList.add("active");
+  el("#learn-nav-btn").classList.remove("active");
   el("#empty-state").classList.add("hidden");
   el("#program-view").classList.add("hidden");
+  el("#learn-view").classList.add("hidden");
   el("#dashboard-view").classList.remove("hidden");
   try {
     await loadDashboard();
@@ -2338,6 +2342,81 @@ function renderEarningsChart() {
   container.appendChild(labels);
 }
 
+// ---------- Learn (disclosed write-ups) ----------
+
+// Same view toggle as showDashboard/selectProgram: hides the others.
+// ponytail: quality filter re-fetches from the server, search is client-side;
+// the list is capped at 500 rows server-side.
+async function showLearn() {
+  state.currentProgramId = null;
+  stopPolling();
+  renderProgramList();
+  el("#dashboard-nav-btn").classList.remove("active");
+  el("#learn-nav-btn").classList.add("active");
+  el("#empty-state").classList.add("hidden");
+  el("#program-view").classList.add("hidden");
+  el("#dashboard-view").classList.add("hidden");
+  el("#learn-view").classList.remove("hidden");
+  try {
+    await loadWriteups();
+  } catch (err) {
+    showToast("Error: " + err.message, "error");
+  }
+}
+
+async function loadWriteups() {
+  state.writeups = await api("/api/writeups?quality=" + encodeURIComponent(el("#learn-quality").value));
+  renderWriteups();
+}
+
+function renderWriteups() {
+  const tbody = el("#learn-table tbody");
+  tbody.innerHTML = "";
+  const rows = filterBySearch(state.writeups || [], "#learn-search", (w) => [w.title, w.program, w.weakness]);
+  for (const w of rows) {
+    const tr = document.createElement("tr");
+    const titleCell = document.createElement("td");
+    const a = document.createElement("a");
+    a.href = w.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = w.title;
+    titleCell.appendChild(a);
+    tr.appendChild(titleCell);
+    tr.appendChild(td(w.program));
+    tr.appendChild(td(w.weakness));
+    const sev = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = "sev-badge sev-" + (w.severity || "info");
+    badge.textContent = w.severity || "n/a";
+    sev.appendChild(badge);
+    tr.appendChild(sev);
+    tr.appendChild(td(w.bounty ? "$" + w.bounty : ""));
+    tr.appendChild(td((w.disclosed_at || "").slice(0, 10)));
+    tr.appendChild(td(w.quality_flag === "ok" ? "detailed" : "low"));
+    tbody.appendChild(tr);
+  }
+}
+
+el("#learn-nav-btn").addEventListener("click", showLearn);
+el("#learn-quality").addEventListener("change", () => loadWriteups().catch((e) => showToast("Error: " + e.message, "error")));
+el("#learn-search").addEventListener("input", debounce(renderWriteups, 200));
+el("#learn-sync-btn").addEventListener("click", async () => {
+  const btn = el("#learn-sync-btn");
+  btn.disabled = true;
+  el("#learn-status").textContent = "Syncing...";
+  try {
+    const res = await api("/api/writeups/sync", { method: "POST" });
+    el("#learn-status").textContent = `Synced: ${res.new} new report(s).`;
+    await loadWriteups();
+  } catch (err) {
+    el("#learn-status").textContent = "Error: " + err.message;
+    showToast("Error: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---------- Telegram notification settings (app-wide, not per-program) ----------
 
 // The server never returns saved tokens (GET /api/settings only says
@@ -2366,7 +2445,19 @@ async function loadSettings() {
   el("#h1-username").value = settings.hackerone_username || "";
   el("#h1-api-token").value = "";
   el("#h1-api-token").placeholder = tokenPlaceholder(settings.hackerone_api_token_set, "API token");
+  el("#gemini-key").value = "";
+  el("#gemini-key").placeholder = tokenPlaceholder(settings.gemini_api_key_set, "Gemini API key");
+  el("#gemini-triage-model").value = settings.gemini_triage_model || "";
+  el("#gemini-analysis-model").value = settings.gemini_analysis_model || "";
 }
+
+// "Remove key" re-submits the whole settings form with an explicit clear flag
+// (a blank key alone means "keep"), so no other setting is clobbered.
+let clearGeminiKey = false;
+el("#gemini-clear-btn").addEventListener("click", () => {
+  clearGeminiKey = true;
+  el("#settings-form").requestSubmit();
+});
 
 el("#settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -2382,10 +2473,16 @@ el("#settings-form").addEventListener("submit", async (e) => {
     scan_retention_count: parseInt(el("#scan-retention").value, 10) || 0,
     hackerone_username: el("#h1-username").value.trim(),
     hackerone_api_token: el("#h1-api-token").value.trim(),
+    gemini_api_key: el("#gemini-key").value.trim(),
+    clear_gemini_api_key: clearGeminiKey,
+    gemini_triage_model: el("#gemini-triage-model").value.trim(),
+    gemini_analysis_model: el("#gemini-analysis-model").value.trim(),
   };
+  clearGeminiKey = false;
   el("#settings-status").textContent = "";
   try {
     await api("/api/settings", { method: "PUT", body: JSON.stringify(body) });
+    await loadSettings();
     el("#settings-status").textContent = "Saved.";
   } catch (err) {
     el("#settings-status").textContent = "Error: " + err.message;

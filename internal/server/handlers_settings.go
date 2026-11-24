@@ -20,6 +20,10 @@ type settingsRequest struct {
 	HackerOneUsername             string `json:"hackerone_username"`
 	HackerOneAPIToken             string `json:"hackerone_api_token"`
 	UncoverAPIKeys                string `json:"uncover_api_keys"`
+	GeminiAPIKey                  string `json:"gemini_api_key"`
+	ClearGeminiAPIKey             bool   `json:"clear_gemini_api_key"` // explicit delete; blank key alone means keep
+	GeminiTriageModel             string `json:"gemini_triage_model"`
+	GeminiAnalysisModel           string `json:"gemini_analysis_model"`
 }
 
 // settingsView is what GET /api/settings returns: everything except the
@@ -43,6 +47,9 @@ type settingsView struct {
 	HackerOneUsername             string `json:"hackerone_username"`
 	HackerOneAPITokenSet          bool   `json:"hackerone_api_token_set"`
 	UncoverAPIKeysSet             bool   `json:"uncover_api_keys_set"`
+	GeminiAPIKeySet               bool   `json:"gemini_api_key_set"`
+	GeminiTriageModel             string `json:"gemini_triage_model"`
+	GeminiAnalysisModel           string `json:"gemini_analysis_model"`
 }
 
 func toSettingsView(s *store.Settings) settingsView {
@@ -58,6 +65,9 @@ func toSettingsView(s *store.Settings) settingsView {
 		HackerOneUsername:             s.HackerOneUsername,
 		HackerOneAPITokenSet:          s.HackerOneAPIToken != "",
 		UncoverAPIKeysSet:             s.UncoverAPIKeys != "",
+		GeminiAPIKeySet:               s.GeminiAPIKey != "",
+		GeminiTriageModel:             s.GeminiTriageModel,
+		GeminiAnalysisModel:           s.GeminiAnalysisModel,
 	}
 }
 
@@ -114,6 +124,23 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	updated, err := s.st.UpdateSettings(botToken, req.TelegramChatID, req.TelegramEnabled,
 		req.TelegramNotifyNewAssets, req.TelegramNotifyChanges, req.TelegramNotifyVulnerabilities, githubToken,
 		req.ScanRetentionCount, req.HackerOneUsername, h1Token, uncoverKeys)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	geminiKey := req.GeminiAPIKey
+	switch {
+	case req.ClearGeminiAPIKey:
+		geminiKey = ""
+	case geminiKey == "":
+		geminiKey = current.GeminiAPIKey
+	}
+	if err := s.st.UpdateGeminiSettings(geminiKey, req.GeminiTriageModel, req.GeminiAnalysisModel); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	updated, err = s.st.GetSettings()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

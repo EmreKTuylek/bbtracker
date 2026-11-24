@@ -18,6 +18,7 @@ import (
 	"bbtracker/internal/scheduler"
 	"bbtracker/internal/server"
 	"bbtracker/internal/store"
+	"bbtracker/internal/writeups"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	sched := scheduler.New(st, engine)
 	go sched.Run(schedCtx)
+	go writeups.Run(schedCtx, st)
 
 	url := "http://" + *addr + "/"
 	log.Printf("bbtracker starting at %s (db: %s)", url, *dbPath)

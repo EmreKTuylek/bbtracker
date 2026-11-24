@@ -10,10 +10,12 @@ func (s *Store) GetSettings() (*Settings, error) {
 	var enabled, notifyNew, notifyChanges, notifyVulns int
 	err := s.db.QueryRow(`SELECT telegram_bot_token, telegram_chat_id, telegram_enabled,
 			telegram_notify_new_assets, telegram_notify_changes, telegram_notify_vulnerabilities, github_token,
-			scan_retention_count, hackerone_username, hackerone_api_token, uncover_api_keys
+			scan_retention_count, hackerone_username, hackerone_api_token, uncover_api_keys,
+			gemini_api_key, gemini_triage_model, gemini_analysis_model, writeups_last_sync_at
 		FROM app_settings WHERE id = 1`).Scan(&set.TelegramBotToken, &set.TelegramChatID, &enabled,
 		&notifyNew, &notifyChanges, &notifyVulns, &set.GithubToken, &set.ScanRetentionCount,
-		&set.HackerOneUsername, &set.HackerOneAPIToken, &set.UncoverAPIKeys)
+		&set.HackerOneUsername, &set.HackerOneAPIToken, &set.UncoverAPIKeys,
+		&set.GeminiAPIKey, &set.GeminiTriageModel, &set.GeminiAnalysisModel, &set.WriteupsLastSyncAt)
 	if err != nil {
 		return nil, err
 	}
@@ -44,4 +46,16 @@ func (s *Store) UpdateSettings(botToken, chatID string, enabled, notifyNewAssets
 		return nil, err
 	}
 	return s.GetSettings()
+}
+
+// UpdateGeminiSettings saves the write-up analysis LLM config. Kept separate
+// from UpdateSettings so that function's (already long) signature and its
+// callers stay untouched. The caller resolves "blank key = keep current".
+func (s *Store) UpdateGeminiSettings(apiKey, triageModel, analysisModel string) error {
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO app_settings (id) VALUES (1)`); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE app_settings SET gemini_api_key=?, gemini_triage_model=?, gemini_analysis_model=? WHERE id=1`,
+		apiKey, triageModel, analysisModel)
+	return err
 }

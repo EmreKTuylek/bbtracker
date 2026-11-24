@@ -192,6 +192,29 @@ type Settings struct {
 	HackerOneUsername             string `json:"hackerone_username"`
 	HackerOneAPIToken             string `json:"hackerone_api_token"`
 	UncoverAPIKeys                string `json:"uncover_api_keys"` // one "agent:value" pair per line; see recon.parseUncoverKeys
+	GeminiAPIKey                  string `json:"gemini_api_key"`
+	GeminiTriageModel             string `json:"gemini_triage_model"`
+	GeminiAnalysisModel           string `json:"gemini_analysis_model"`
+	WriteupsLastSyncAt            string `json:"writeups_last_sync_at"`
+}
+
+// Writeup is one disclosed bug bounty report. RawText is analysis input only
+// and is deliberately excluded from JSON so it can never reach the UI.
+type Writeup struct {
+	ID          int64   `json:"id"`
+	Source      string  `json:"source"`
+	ExternalID  string  `json:"external_id"`
+	URL         string  `json:"url"`
+	Title       string  `json:"title"`
+	Program     string  `json:"program"`
+	Weakness    string  `json:"weakness"`
+	Severity    string  `json:"severity"`
+	Bounty      float64 `json:"bounty"`
+	DisclosedAt string  `json:"disclosed_at"`
+	RawText     string  `json:"-"`
+	ContentHash string  `json:"-"`
+	QualityFlag string  `json:"quality_flag"`
+	CreatedAt   string  `json:"created_at"`
 }
 
 // Vulnerability is one nuclei template match for an asset, kept as a single

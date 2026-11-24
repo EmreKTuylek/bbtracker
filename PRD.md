@@ -119,6 +119,13 @@ binary.
   unified findings panel, for offline reporting via the browser's own
   print-to-PDF.
 
+- Write-up library (Learn tab): disclosed HackerOne reports synced daily from
+  the Hacktivity feed into a searchable list with a heuristic detail flag,
+  linking to the original report. Metadata plus HackerOne's generated summary
+  only (the API withholds other people's full report bodies). LLM root-cause
+  analysis (BYOK Gemini) is planned, see `WRITEUP_MODULE.md`; only the key/model
+  settings exist so far.
+
 ## Non-goals (v1)
 
 - No multi-user/auth — this is a single-operator local tool.

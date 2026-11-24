@@ -391,5 +391,31 @@ CREATE TABLE IF NOT EXISTS app_settings (
     scan_retention_count             INTEGER NOT NULL DEFAULT 0, -- 0 = unlimited; see Store.PruneOldScans
     hackerone_username               TEXT NOT NULL DEFAULT '',
     hackerone_api_token              TEXT NOT NULL DEFAULT '',
-    uncover_api_keys                 TEXT NOT NULL DEFAULT '' -- one "agent:value" pair per line; see recon.parseUncoverKeys
+    uncover_api_keys                 TEXT NOT NULL DEFAULT '', -- one "agent:value" pair per line; see recon.parseUncoverKeys
+    gemini_api_key                   TEXT NOT NULL DEFAULT '', -- write-up analysis (BYOK); never returned by the API
+    gemini_triage_model              TEXT NOT NULL DEFAULT '',
+    gemini_analysis_model            TEXT NOT NULL DEFAULT '',
+    writeups_last_sync_at            TEXT NOT NULL DEFAULT '' -- UTC, set by Store.MarkWriteupsSynced
 );
+
+-- Disclosed bug bounty reports pulled from HackerOne Hacktivity (see
+-- internal/writeups). raw_text is analysis input only: never served by the
+-- API/UI (Writeup.RawText is json:"-").
+CREATE TABLE IF NOT EXISTS writeups (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source       TEXT NOT NULL,
+    external_id  TEXT NOT NULL,
+    url          TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    program      TEXT NOT NULL DEFAULT '',
+    weakness     TEXT NOT NULL DEFAULT '',
+    severity     TEXT NOT NULL DEFAULT '',
+    bounty       REAL NOT NULL DEFAULT 0,
+    disclosed_at TEXT NOT NULL DEFAULT '',
+    raw_text     TEXT NOT NULL DEFAULT '',
+    content_hash TEXT NOT NULL,
+    quality_flag TEXT NOT NULL DEFAULT 'ok' CHECK (quality_flag IN ('ok', 'low')),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_writeups_disclosed ON writeups(disclosed_at DESC);

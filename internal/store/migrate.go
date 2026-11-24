@@ -88,6 +88,10 @@ func (s *Store) migrate() error {
 		{"scans", "asset_id INTEGER NOT NULL DEFAULT 0"},
 		{"scans", "run_crawl INTEGER NOT NULL DEFAULT 0"},
 		{"programs", "schedule_run_crawl INTEGER NOT NULL DEFAULT 0"},
+		{"app_settings", "gemini_api_key TEXT NOT NULL DEFAULT ''"},
+		{"app_settings", "gemini_triage_model TEXT NOT NULL DEFAULT ''"},
+		{"app_settings", "gemini_analysis_model TEXT NOT NULL DEFAULT ''"},
+		{"app_settings", "writeups_last_sync_at TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
 		if err := s.addColumnIfMissing(m.table, m.ddl); err != nil {

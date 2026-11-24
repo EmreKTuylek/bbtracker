@@ -87,6 +87,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/settings", s.handleUpdateSettings)
 	s.mux.HandleFunc("POST /api/settings/test", s.handleTestTelegram)
 
+	// Write-ups (disclosed HackerOne reports)
+	s.mux.HandleFunc("GET /api/writeups", s.handleListWriteups)
+	s.mux.HandleFunc("POST /api/writeups/sync", s.handleSyncWriteups)
+
 	// Vulnerabilities (nuclei findings).
 	s.mux.HandleFunc("GET /api/programs/{id}/vulnerabilities", s.handleListVulnerabilities)
 
